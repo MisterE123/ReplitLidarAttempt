@@ -4,8 +4,17 @@ import time
 from typing import Tuple
 
 class IMUAPI:
-    def __init__(self, port: str = '/dev/ttyACM0', baud: int = 115200):
-        """Initialize IMU API with serial connection parameters"""
+    def __init__(self, config_path: str = 'python/config.ini'):
+        """Initialize IMU API with config file"""
+        import configparser
+        config = configparser.ConfigParser()
+        config.read(config_path)
+        
+        port = config['IMU']['port']
+        baud = int(config['IMU'].get('baud_rate', '115200'))
+        self.still_delay = float(config['Calibration']['still_delay_seconds'])
+        self.rotation_delay = float(config['Calibration']['rotation_delay_seconds'])
+        
         self.ser = serial.Serial(port, baud)
         time.sleep(2)  # Wait for Arduino reset
         

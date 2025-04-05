@@ -39,6 +39,9 @@ class CalibrationGUI:
 
     def calibrate_still(self):
         try:
+            self.status = f"Keep IMU still for {self.imu.still_delay} seconds..."
+            pygame.display.flip()
+            time.sleep(self.imu.still_delay)
             self.imu.calibrate_still_sensors()
             self.status = "Still calibration complete"
         except Exception as e:
@@ -46,6 +49,9 @@ class CalibrationGUI:
 
     def calibrate_mag(self):
         try:
+            self.status = f"Get ready to rotate IMU for {self.imu.rotation_delay} seconds..."
+            pygame.display.flip()
+            time.sleep(self.imu.rotation_delay)
             self.imu.calibrate_mag()
             self.status = "Magnetometer calibration complete"
         except Exception as e:
