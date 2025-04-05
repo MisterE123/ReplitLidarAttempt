@@ -4,8 +4,6 @@ CREATE TABLE scanning_sessions (
     session_id INTEGER PRIMARY KEY,
     start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     end_time TIMESTAMP,
-    imu_start_micro BIGINT,    -- IMU's internal microsecond counter at session start
-    lidar_start_micro BIGINT,  -- LIDAR's internal microsecond counter at session start
     notes TEXT
 );
 
