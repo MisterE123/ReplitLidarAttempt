@@ -65,6 +65,10 @@ void setup() {
 }
 
 void calibrateGravity() {
+  // Send reference epoch first
+  Serial.print("EPOCH_REFERENCE,");
+  Serial.println(micros());
+  
   Serial.println("Calibrating gravity. Keep device still...");
 
   // Number of samples to average
