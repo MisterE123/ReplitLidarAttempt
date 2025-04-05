@@ -17,14 +17,30 @@ except FileNotFoundError as e: messagebox.showerror("Config Error", f"Could not 
 except (KeyError, ValueError) as e: messagebox.showerror("Config Error", f"Error reading config.ini: {e}"); sys.exit(1)
 
 # --- Import Data Collector ---
+DataCollector = None # Initialize to None
 try:
     # Assumes updated main_collector.py with DataCollector class
     from main_collector import DataCollector
+    # --- ADDED LOGGING ---
+    if DataCollector:
+        print("DEBUG: Successfully imported DataCollector from main_collector.py.")
+    else:
+        # This case shouldn't happen if the import succeeded without error,
+        # but adding for completeness.
+        print("DEBUG: Imported main_collector.py, but DataCollector is None/False.")
+    # --- END ADDED LOGGING ---
 except ImportError as e:
     messagebox.showerror("Error", f"Could not import DataCollector from main_collector.py: {e}")
+    # --- ADDED LOGGING ---
+    print(f"DEBUG: ImportError occurred when importing DataCollector: {e}")
+    # --- END ADDED LOGGING ---
     DataCollector = None # type: ignore
 except Exception as e:
      messagebox.showerror("Error", f"Error importing DataCollector: {e}")
+     # --- ADDED LOGGING ---
+     print(f"DEBUG: An unexpected Exception occurred when importing DataCollector: {e}")
+     traceback.print_exc() # Print stack trace for unexpected errors
+     # --- END ADDED LOGGING ---
      DataCollector = None # type: ignore
 
 
@@ -120,8 +136,15 @@ class CalibrationGUI_Tk:
             self.log_status(status_msg, tag='success')
             if hasattr(self, 'calibrate_button'): self.calibrate_button.config(state=tk.NORMAL)
             if hasattr(self, 'start_collection_button'):
-                 if DataCollector: self.start_collection_button.config(state=tk.NORMAL)
-                 else: self.start_collection_button.config(state=tk.DISABLED)
+                 # --- Check DataCollector status here too ---
+                 print(f"DEBUG (_check_api_init): Checking DataCollector status. DataCollector is None: {DataCollector is None}")
+                 if DataCollector:
+                      self.start_collection_button.config(state=tk.NORMAL)
+                      print("DEBUG (_check_api_init): Enabling Start Collection button.")
+                 else:
+                      self.start_collection_button.config(state=tk.DISABLED)
+                      print("DEBUG (_check_api_init): DataCollector is None, keeping Start Collection button DISABLED.")
+                 # --- End Check ---
             self._show_frame(self.main_menu_frame)
         else:
             self.log_status(self.api_init_error or "Failed to initialize APIs.", tag='error')
@@ -142,7 +165,8 @@ class CalibrationGUI_Tk:
         self.start_collection_button.pack(pady=15, ipadx=20, ipady=10) # Start shown initially
         quit_button = ttk.Button(self.main_menu_frame, text="Quit", command=self._on_closing); quit_button.pack(pady=15)
         if DataCollector is None:
-             self.log_status("Data collection disabled due to import error.", tag='error')
+             # Log this potential issue during setup
+             self.log_status("Data collection disabled (DataCollector is None at setup).", tag='warning')
              self.start_collection_button.config(state=tk.DISABLED)
 
     def _setup_calibration_frame(self):
@@ -274,15 +298,20 @@ class CalibrationGUI_Tk:
         """Prompts for scan name and starts the data collection thread."""
         if self.is_collecting: self.log_status("Collection already running.", tag='warning'); return
         if self.current_state == STATE_CALIBRATING: messagebox.showwarning("Busy", "Finish calibration first."); return
-        if not self.imu_api or DataCollector is None: messagebox.showerror("Error", "APIs not ready or DataCollector missing."); return
+        # --- Check DataCollector again before starting ---
+        if not self.imu_api or DataCollector is None:
+             print(f"DEBUG (_start_data_collection): Cannot start. IMU API Ready: {self.imu_api is not None}. DataCollector Ready: {DataCollector is not None}")
+             messagebox.showerror("Error", "APIs not ready or DataCollector missing."); return
+        # --- End Check ---
 
         # --- Prompt for Scan Name ---
         scan_name = simpledialog.askstring("Scan Name", "Enter a name/description for this scan:", parent=self.root)
         if not scan_name: # User cancelled or entered empty string
             self.log_status("Scan name not provided. Collection cancelled.", tag='warning')
             return
-        sanitized_name = self._sanitize_filename(scan_name)
-        self.log_status(f"Sanitized scan name: {sanitized_name}", tag='info')
+        # Use original name for description, sanitized name for folder is handled by DataManager
+        # sanitized_name = self._sanitize_filename(scan_name)
+        # self.log_status(f"Using scan name: {scan_name}", tag='info')
         # ---
 
         self.log_status("Preparing data collection process...", tag='collect')
@@ -300,7 +329,7 @@ class CalibrationGUI_Tk:
         try:
              self.data_collector_instance = DataCollector(config_path='config.ini')
              # Prepare the session (creates folder, starts DB connection)
-             if not self.data_collector_instance.prepare_session(session_name=scan_name): # Use original name for description
+             if not self.data_collector_instance.prepare_session(session_name=scan_name): # Use original name
                   self.log_status("Failed to prepare data collection session.", tag='error')
                   messagebox.showerror("Error", "Failed to prepare session. Check logs and storage path.")
                   self._collection_finished_update() # Reset UI
@@ -317,7 +346,9 @@ class CalibrationGUI_Tk:
                                                   args=(self.data_collector_instance,), # Pass instance
                                                   daemon=True)
         self.collection_thread.start()
-        self.log_status(f"Data collection started for session: {self.data_collector_instance.db_manager.current_session_name}", tag='collect')
+        # Use the actual session name generated by DataManager if available
+        actual_session_name = self.data_collector_instance.db_manager.current_session_name if self.data_collector_instance.db_manager else scan_name
+        self.log_status(f"Data collection started for session: {actual_session_name}", tag='collect')
 
 
     def _stop_data_collection(self):
@@ -357,12 +388,21 @@ class CalibrationGUI_Tk:
 
         # Update button states
         self.stop_collection_button.pack_forget()
+
+        # --- ADDED LOGGING before setting button state ---
+        print(f"DEBUG (_collection_finished_update): Checking conditions before enabling buttons.")
+        print(f"DEBUG: self.imu_api is None: {self.imu_api is None}")
+        print(f"DEBUG: DataCollector is None: {DataCollector is None}")
+        # --- END ADDED LOGGING ---
+
         if self.imu_api and DataCollector:
              self.start_collection_button.config(state=tk.NORMAL)
              self.calibrate_button.config(state=tk.NORMAL)
+             print("DEBUG (_collection_finished_update): Enabling Start Collection and Calibrate buttons.")
         else:
              self.start_collection_button.config(state=tk.DISABLED)
              self.calibrate_button.config(state=tk.DISABLED)
+             print("DEBUG (_collection_finished_update): Keeping Start Collection and Calibrate buttons DISABLED.")
 
         # Ensure start button is visible again
         if not self.start_collection_button.winfo_ismapped():
@@ -373,19 +413,33 @@ class CalibrationGUI_Tk:
     def _go_to_main_menu(self):
         """Returns to the main menu frame."""
         self.current_state = STATE_MAIN_MENU
-        self._show_calibration_button(None)
+        self._show_calibration_button(None) # Hide calibration buttons
         self._show_frame(self.main_menu_frame)
+
+        # --- ADDED LOGGING before setting button state ---
+        print(f"DEBUG (_go_to_main_menu): Checking conditions before setting button states.")
+        print(f"DEBUG: self.imu_api is None: {self.imu_api is None}")
+        print(f"DEBUG: DataCollector is None: {DataCollector is None}")
+        # --- END ADDED LOGGING ---
+
         if self.imu_api:
              status_msg = "IMU API Ready."
              status_msg += " LiDAR Active." if self.imu_api.lidar and self.imu_api.lidar._is_connected else " LiDAR Inactive."
              self.log_status(f"Returned to Main Menu. {status_msg}", tag='info')
              self.calibrate_button.config(state=tk.NORMAL)
-             if DataCollector: self.start_collection_button.config(state=tk.NORMAL)
-             else: self.start_collection_button.config(state=tk.DISABLED)
+             if DataCollector:
+                  self.start_collection_button.config(state=tk.NORMAL)
+                  print("DEBUG (_go_to_main_menu): Enabling Start Collection button.")
+             else:
+                  self.start_collection_button.config(state=tk.DISABLED)
+                  print("DEBUG (_go_to_main_menu): DataCollector is None, keeping Start Collection button DISABLED.")
         else:
              self.log_status(f"Returned to Main Menu. APIs disconnected or failed.", tag='warning')
              self.calibrate_button.config(state=tk.DISABLED)
              self.start_collection_button.config(state=tk.DISABLED)
+             print("DEBUG (_go_to_main_menu): IMU API is None, keeping Start Collection and Calibrate buttons DISABLED.")
+
+        # Hide stop button and ensure start button is visible
         self.stop_collection_button.pack_forget()
         if not self.start_collection_button.winfo_ismapped():
              self.start_collection_button.pack(pady=15, ipadx=20, ipady=10)
