@@ -35,13 +35,25 @@ class IMUAPI:
         try:
             port = config['IMU']['port']
             baud = int(config['IMU'].get('baud_rate', '115200'))
-            # Delays are handled by Arduino, remove from Python config unless needed for Python-side logic
-            # self.still_delay = float(config['Calibration']['still_delay_seconds'])
-            # self.rotation_delay = float(config['Calibration']['rotation_delay_seconds'])
         except KeyError as e:
             raise KeyError(f"Missing key in config file '{config_path}': {e}")
         except ValueError as e:
              raise ValueError(f"Invalid numerical value in config file '{config_path}': {e}")
+
+        try:
+            # Load delays from config and store them
+            self.still_delay = float(config['Calibration'].get('still_delay_seconds', 5.0))
+            self.rotation_delay = float(config['Calibration'].get('rotation_delay_seconds', 10.0)) # Use get for defaults
+        except KeyError as e:
+            # Handle missing [Calibration] section or keys if desired, or let it raise
+            print(f"IMUAPI: Warning - [Calibration] section or keys missing in config: {e}. Using defaults.")
+            self.still_delay = 5.0
+            self.rotation_delay = 10.0
+        except ValueError as e:
+            raise ValueError(f"Invalid numerical value for delays in config file '{config_path}': {e}")
+
+        # Remove or update the comment that previously said these delays were not used
+
 
         try:
             self.ser = serial.Serial(port, baud, timeout=serial_timeout)
@@ -538,141 +550,141 @@ class IMUAPI:
         self.ser = None # Indicate port is closed
 
 
-# # Example Usage (requires a config.ini file)
-# if __name__ == '__main__':
-#     # Create a dummy config.ini for testing if it doesn't exist
-#     CONFIG_FILE = 'config.ini' # Assuming in same directory for example
-#     try:
-#         with open(CONFIG_FILE, 'r') as f:
-#              pass
-#         print(f"Using existing config file: {CONFIG_FILE}")
-#     except FileNotFoundError:
-#         print(f"Creating dummy config file: {CONFIG_FILE}")
-#         with open(CONFIG_FILE, 'w') as f:
-#             f.write("[IMU]\n")
-#             # --- !!! CHANGE THIS TO YOUR ARDUINO'S PORT !!! ---
-#             # Examples: 'COM3' on Windows, '/dev/ttyACM0' or '/dev/ttyUSB0' on Linux, '/dev/cu.usbmodemXXXX' on macOS
-#             f.write("port = COM3\n")
-#             f.write("baud_rate = 115200\n")
-#             # f.write("\n[Calibration]\n") # Not currently used
-#             # f.write("still_delay_seconds = 5\n")
-#             # f.write("rotation_delay_seconds = 15\n")
+# Example Usage (requires a config.ini file)
+if __name__ == '__main__':
+    # Create a dummy config.ini for testing if it doesn't exist
+    CONFIG_FILE = 'config.ini' # Assuming in same directory for example
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+             pass
+        print(f"Using existing config file: {CONFIG_FILE}")
+    except FileNotFoundError:
+        print(f"Creating dummy config file: {CONFIG_FILE}")
+        with open(CONFIG_FILE, 'w') as f:
+            f.write("[IMU]\n")
+            # --- !!! CHANGE THIS TO YOUR ARDUINO'S PORT !!! ---
+            # Examples: 'COM3' on Windows, '/dev/ttyACM0' or '/dev/ttyUSB0' on Linux, '/dev/cu.usbmodemXXXX' on macOS
+            f.write("port = COM3\n")
+            f.write("baud_rate = 115200\n")
+            # f.write("\n[Calibration]\n") # Not currently used
+            # f.write("still_delay_seconds = 5\n")
+            # f.write("rotation_delay_seconds = 15\n")
 
-#     try:
-#         print("Initializing IMUAPI...")
-#         # Use a slightly longer default timeout for potentially slower Arduinos
-#         imu = IMUAPI(config_path=CONFIG_FILE, serial_timeout=2.0)
+    try:
+        print("Initializing IMUAPI...")
+        # Use a slightly longer default timeout for potentially slower Arduinos
+        imu = IMUAPI(config_path=CONFIG_FILE, serial_timeout=2.0)
 
-#         # --- Calibration Sequence ---
-#         print("\nStarting Calibration...")
-#         try:
-#              # 1. Time Calibration (Required before collection)
-#              print("Calibrating Time...")
-#              imu_epoch_us = imu.calibrate_time()
-#              print(f"Time Calibration Complete. IMU Epoch: {imu_epoch_us} us")
-#              time_calibrated = True
+        # --- Calibration Sequence ---
+        print("\nStarting Calibration...")
+        try:
+             # 1. Time Calibration (Required before collection)
+             print("Calibrating Time...")
+             imu_epoch_us = imu.calibrate_time()
+             print(f"Time Calibration Complete. IMU Epoch: {imu_epoch_us} us")
+             time_calibrated = True
 
-#              # 2. Gravity Calibration (Hold Still)
-#              input("Prepare for Gravity Calibration. Keep the IMU perfectly still, then press Enter...")
-#              print("Calibrating Gravity...")
-#              imu.calibrate_gravity(timeout_seconds=5.0) # Wait up to 5s
-#              print("Gravity Calibration Complete.")
+             # 2. Gravity Calibration (Hold Still)
+             input("Prepare for Gravity Calibration. Keep the IMU perfectly still, then press Enter...")
+             print("Calibrating Gravity...")
+             imu.calibrate_gravity(timeout_seconds=5.0) # Wait up to 5s
+             print("Gravity Calibration Complete.")
 
-#              # 3. Gyroscope Calibration (Hold Still)
-#              input("Prepare for Gyro Calibration. Keep the IMU perfectly still, then press Enter...")
-#              print("Calibrating Gyroscope...")
-#              imu.calibrate_gyro(timeout_seconds=5.0) # Wait up to 5s
-#              print("Gyro Calibration Complete.")
+             # 3. Gyroscope Calibration (Hold Still)
+             input("Prepare for Gyro Calibration. Keep the IMU perfectly still, then press Enter...")
+             print("Calibrating Gyroscope...")
+             imu.calibrate_gyro(timeout_seconds=5.0) # Wait up to 5s
+             print("Gyro Calibration Complete.")
 
-#              # 4. Magnetometer Calibration (Rotate)
-#              input("Prepare for Magnetometer Calibration. Press Enter to start, then rotate slowly for 10 seconds...")
-#              print("Calibrating Magnetometer...")
-#              imu.calibrate_mag(timeout_seconds=15.0) # Wait up to 15s (covers 10s + buffer)
-#              print("Magnetometer Calibration Complete.")
+             # 4. Magnetometer Calibration (Rotate)
+             input("Prepare for Magnetometer Calibration. Press Enter to start, then rotate slowly for 10 seconds...")
+             print("Calibrating Magnetometer...")
+             imu.calibrate_mag(timeout_seconds=15.0) # Wait up to 15s (covers 10s + buffer)
+             print("Magnetometer Calibration Complete.")
 
-#         except (IMUCommunicationError, IMUCalibrationError, IMUTimeoutError) as e:
-#             print(f"\n--- CALIBRATION FAILED ---")
-#             print(f"Error: {e}")
-#             imu.close()
-#             exit()
-#         except Exception as e:
-#              print(f"\n--- UNEXPECTED ERROR DURING CALIBRATION ---")
-#              print(f"Error: {e}")
-#              imu.close()
-#              exit()
-
-
-#         # --- Data Collection Example ---
-#         if time_calibrated: # Only proceed if time was calibrated
-#             print("\nStarting Data Collection Example...")
-#             try:
-#                 if imu.start_collection():
-#                     print("Collection started on IMU.")
-#                     collection_start_time = time.time()
-#                     num_blocks_received = 0
-#                     max_blocks = 10 # Collect 10 blocks for this example
-#                     print(f"Attempting to read {max_blocks} data blocks...")
-
-#                     while num_blocks_received < max_blocks:
-#                          # Wait for the next data block
-#                          print(f"Waiting for block {num_blocks_received + 1}/{max_blocks}...")
-#                          data_block = imu.read_data_block(read_timeout_seconds=3.0) # Wait up to 3s for a block
-
-#                          if data_block:
-#                              num_blocks_received += 1
-#                              print(f"--- Block {num_blocks_received} Received ---")
-#                              # Process the data (Example: print counts)
-#                              print(f"  Mag Readings: {len(data_block['M'])}")
-#                              print(f"  Acc Readings: {len(data_block['A'])}")
-#                              print(f"  Eul Readings: {len(data_block['E'])}")
-#                              print(f"  Gyr Readings: {len(data_block['G'])}")
-#                              # Example: Print first accel reading timestamp if available
-#                              if data_block['A']:
-#                                  print(f"  First Accel Timestamp (us since epoch): {data_block['A'][0]['timestamp']}")
-#                          else:
-#                              print("No data block received within timeout.")
-#                              # Optional: break or implement retry logic
-#                              # Check if collection duration exceeded
-#                              if time.time() - collection_start_time > 30: # Example overall limit
-#                                   print("Overall collection time limit reached.")
-#                                   break
+        except (IMUCommunicationError, IMUCalibrationError, IMUTimeoutError) as e:
+            print(f"\n--- CALIBRATION FAILED ---")
+            print(f"Error: {e}")
+            imu.close()
+            exit()
+        except Exception as e:
+             print(f"\n--- UNEXPECTED ERROR DURING CALIBRATION ---")
+             print(f"Error: {e}")
+             imu.close()
+             exit()
 
 
-#                     print("\nStopping data collection...")
-#                     imu.stop_collection()
-#                     print("Collection stopped.")
+        # --- Data Collection Example ---
+        if time_calibrated: # Only proceed if time was calibrated
+            print("\nStarting Data Collection Example...")
+            try:
+                if imu.start_collection():
+                    print("Collection started on IMU.")
+                    collection_start_time = time.time()
+                    num_blocks_received = 0
+                    max_blocks = 10 # Collect 10 blocks for this example
+                    print(f"Attempting to read {max_blocks} data blocks...")
 
-#                 else:
-#                      print("Failed to start collection (check IMU state/calibration).")
+                    while num_blocks_received < max_blocks:
+                         # Wait for the next data block
+                         print(f"Waiting for block {num_blocks_received + 1}/{max_blocks}...")
+                         data_block = imu.read_data_block(read_timeout_seconds=3.0) # Wait up to 3s for a block
 
-#             except (IMUCommunicationError, IMUTimeoutError) as e:
-#                  print(f"\n--- DATA COLLECTION FAILED ---")
-#                  print(f"Error: {e}")
-#                  # Try to stop collection even if error occurred
-#                  try:
-#                      print("Attempting to stop collection after error...")
-#                      imu.stop_collection()
-#                  except Exception as stop_e:
-#                      print(f"Could not stop collection after error: {stop_e}")
-
-#             except Exception as e:
-#                  print(f"\n--- UNEXPECTED ERROR DURING COLLECTION ---")
-#                  print(f"Error: {e}")
-#                  # Try to stop collection
-#                  try:
-#                      print("Attempting to stop collection after error...")
-#                      imu.stop_collection()
-#                  except Exception as stop_e:
-#                      print(f"Could not stop collection after error: {stop_e}")
-
-#         else:
-#              print("\nSkipping data collection because time was not calibrated.")
+                         if data_block:
+                             num_blocks_received += 1
+                             print(f"--- Block {num_blocks_received} Received ---")
+                             # Process the data (Example: print counts)
+                             print(f"  Mag Readings: {len(data_block['M'])}")
+                             print(f"  Acc Readings: {len(data_block['A'])}")
+                             print(f"  Eul Readings: {len(data_block['E'])}")
+                             print(f"  Gyr Readings: {len(data_block['G'])}")
+                             # Example: Print first accel reading timestamp if available
+                             if data_block['A']:
+                                 print(f"  First Accel Timestamp (us since epoch): {data_block['A'][0]['timestamp']}")
+                         else:
+                             print("No data block received within timeout.")
+                             # Optional: break or implement retry logic
+                             # Check if collection duration exceeded
+                             if time.time() - collection_start_time > 30: # Example overall limit
+                                  print("Overall collection time limit reached.")
+                                  break
 
 
-#     finally:
-#         # Ensure the port is closed
-#         if 'imu' in locals() and imu.ser is not None:
-#              print("Closing serial port.")
-#              imu.close()
+                    print("\nStopping data collection...")
+                    imu.stop_collection()
+                    print("Collection stopped.")
 
-#     print("\nIMU API Example Finished.")
+                else:
+                     print("Failed to start collection (check IMU state/calibration).")
+
+            except (IMUCommunicationError, IMUTimeoutError) as e:
+                 print(f"\n--- DATA COLLECTION FAILED ---")
+                 print(f"Error: {e}")
+                 # Try to stop collection even if error occurred
+                 try:
+                     print("Attempting to stop collection after error...")
+                     imu.stop_collection()
+                 except Exception as stop_e:
+                     print(f"Could not stop collection after error: {stop_e}")
+
+            except Exception as e:
+                 print(f"\n--- UNEXPECTED ERROR DURING COLLECTION ---")
+                 print(f"Error: {e}")
+                 # Try to stop collection
+                 try:
+                     print("Attempting to stop collection after error...")
+                     imu.stop_collection()
+                 except Exception as stop_e:
+                     print(f"Could not stop collection after error: {stop_e}")
+
+        else:
+             print("\nSkipping data collection because time was not calibrated.")
+
+
+    finally:
+        # Ensure the port is closed
+        if 'imu' in locals() and imu.ser is not None:
+             print("Closing serial port.")
+             imu.close()
+
+    print("\nIMU API Example Finished.")
