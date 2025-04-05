@@ -1,5 +1,14 @@
-
 #include <MKRIMU.h>
+
+// States
+enum State {
+  READY,
+  TIME_CALIBRATING,
+  GRAVITY_CALIBRATING,
+  COLLECTING_DATA
+};
+
+State currentState = READY;
 
 // Buffer size based on actual IMU capabilities
 // For 100ms collection period:
@@ -38,102 +47,103 @@ float gravityZ = 0.0;
 
 // Timing variables
 unsigned long lastSendTime = 0;
-const unsigned long SEND_INTERVAL = 100;  // Send every 100ms
+const unsigned long SEND_INTERVAL = 100;
 
 void setup() {
-  Serial.begin(115200);  // Higher baud rate for more bandwidth
+  Serial.begin(115200);
   while (!Serial);
 
   if (!IMU.begin()) {
-    Serial.println("Failed to initialize IMU!");
+    Serial.println("ERROR: Failed to initialize IMU!");
     while (1);
   }
 
-  Serial.println("Send 'calibrate' to start gravity calibration...");
-  while (!Serial.available() || Serial.readStringUntil('\n') != "calibrate") {
-    delay(100);
+  printReadyMessage();
+}
+
+void printReadyMessage() {
+  Serial.println("READY");
+  Serial.println("Available commands:");
+  Serial.println("  time_calibrate - Start time synchronization");
+  Serial.println("  gravity_calibrate - Calibrate gravity compensation");
+  Serial.println("  start_collection - Begin data collection");
+  Serial.println("  stop_collection - Stop data collection");
+}
+
+void loop() {
+  if (Serial.available()) {
+    String command = Serial.readStringUntil('\n');
+    command.trim();
+
+    if (command == "time_calibrate") {
+      currentState = TIME_CALIBRATING;
+      handleTimeCalibration();
+    } else if (command == "gravity_calibrate") {
+      currentState = GRAVITY_CALIBRATING;
+      calibrateGravity();
+    } else if (command == "start_collection") {
+      currentState = COLLECTING_DATA;
+      resetBuffers();
+      lastSendTime = millis();
+    } else if (command == "stop_collection") {
+      currentState = READY;
+      printReadyMessage();
+    }
   }
 
-  // Wait for IMU to settle
-  delay(1000);
+  if (currentState == COLLECTING_DATA) {
+    collectAndSendData();
+  }
+}
 
-  // Calibrate gravity
-  calibrateGravity();
-
-  // Reset the timer
-  lastSendTime = millis();
+void handleTimeCalibration() {
+  // Respond immediately with timestamp
+  Serial.print("TIME_ECHO,");
+  Serial.println(micros());
+  currentState = READY;
+  printReadyMessage();
 }
 
 void calibrateGravity() {
-  // Send reference epoch first
-  Serial.print("EPOCH_REFERENCE,");
-  Serial.println(micros());
-  
-  Serial.println("Calibrating gravity. Keep device still...");
+  Serial.println("GRAVITY_CAL_START");
 
-  // Number of samples to average
   const int numSamples = 100;
-
-  float sumX = 0.0;
-  float sumY = 0.0;
-  float sumZ = 0.0;
+  float sumX = 0.0, sumY = 0.0, sumZ = 0.0;
   int sampleCount = 0;
 
-  // Collect samples for about 1 second
   unsigned long startTime = millis();
   while (millis() - startTime < 1000 && sampleCount < numSamples) {
     if (IMU.accelerationAvailable()) {
       float x, y, z;
       IMU.readAcceleration(x, y, z);
-
       sumX += x;
       sumY += y;
       sumZ += z;
       sampleCount++;
-
-      delay(10);  // Small delay between readings
+      delay(10);
     }
   }
 
-  // Calculate average gravity vector if samples were collected
   if (sampleCount > 0) {
     gravityX = sumX / sampleCount;
     gravityY = sumY / sampleCount;
     gravityZ = sumZ / sampleCount;
-
-    Serial.print("Gravity calibrated: [");
-    Serial.print(gravityX);
-    Serial.print(", ");
-    Serial.print(gravityY);
-    Serial.print(", ");
-    Serial.print(gravityZ);
-    Serial.println("]");
+    Serial.println("GRAVITY_CAL_COMPLETE");
   } else {
-    Serial.println("Gravity calibration failed. Using default values.");
     gravityX = 0.0;
     gravityY = 0.0;
     gravityZ = 1.0;
+    Serial.println("GRAVITY_CAL_FAILED");
   }
+
+  currentState = READY;
+  printReadyMessage();
 }
 
-void loop() {
-  // Collect data continuously at the IMU's natural rate
-  collectSensorData();
-
-  // Check if it's time to send data
-  unsigned long currentTime = millis();
-  if (currentTime - lastSendTime >= SEND_INTERVAL) {
-    sendAllData();
-    resetBuffers();
-    lastSendTime = currentTime;
-  }
-}
-
-void collectSensorData() {
+void collectAndSendData() {
   float x, y, z;
-  unsigned long timestamp = micros();  // Use microseconds for more precise timing
+  unsigned long timestamp = micros();
 
-  // Read magnetic field data (slower rate)
   if (IMU.magneticFieldAvailable() && magCount < MAG_BUFFER_SIZE) {
     IMU.readMagneticField(x, y, z);
     magBuffer[magCount].timestamp = timestamp;
@@ -143,18 +153,15 @@ void collectSensorData() {
     magCount++;
   }
 
-  // Read acceleration data with gravity compensation
   if (IMU.accelerationAvailable() && accelCount < ACCEL_BUFFER_SIZE) {
     IMU.readAcceleration(x, y, z);
     accelBuffer[accelCount].timestamp = timestamp;
-    // Remove gravity component
     accelBuffer[accelCount].x = x - gravityX;
     accelBuffer[accelCount].y = y - gravityY;
     accelBuffer[accelCount].z = z - gravityZ;
     accelCount++;
   }
 
-  // Read Euler angles data
   if (IMU.eulerAnglesAvailable() && eulerCount < EULER_BUFFER_SIZE) {
     IMU.readEulerAngles(x, y, z);
     eulerBuffer[eulerCount].timestamp = timestamp;
@@ -164,7 +171,6 @@ void collectSensorData() {
     eulerCount++;
   }
 
-  // Read gyroscope data
   if (IMU.gyroscopeAvailable() && gyroCount < GYRO_BUFFER_SIZE) {
     IMU.readGyroscope(x, y, z);
     gyroBuffer[gyroCount].timestamp = timestamp;
@@ -174,23 +180,19 @@ void collectSensorData() {
     gyroCount++;
   }
 
-  // Check for buffer overflow and warn if needed
-  if (magCount >= MAG_BUFFER_SIZE || 
+  unsigned long currentTime = millis();
+  if (currentTime - lastSendTime >= SEND_INTERVAL ||
+      magCount >= MAG_BUFFER_SIZE ||
       accelCount >= ACCEL_BUFFER_SIZE ||
       eulerCount >= EULER_BUFFER_SIZE ||
       gyroCount >= GYRO_BUFFER_SIZE) {
-    // Force a data send if any buffer is full
-    unsigned long currentTime = millis();
-    if (currentTime - lastSendTime >= 50) {  // At least 50ms since last send
-      sendAllData();
-      resetBuffers();
-      lastSendTime = currentTime;
-    }
+    sendAllData();
+    resetBuffers();
+    lastSendTime = currentTime;
   }
 }
 
 void sendAllData() {
-  // Begin data block with a marker and counts
   Serial.print("BEGIN_DATA_BLOCK,");
   Serial.print(magCount);
   Serial.print(",");
@@ -200,7 +202,6 @@ void sendAllData() {
   Serial.print(",");
   Serial.println(gyroCount);
 
-  // Send magnetic field data
   for (int i = 0; i < magCount; i++) {
     Serial.print("M,");
     Serial.print(magBuffer[i].timestamp);
@@ -212,7 +213,6 @@ void sendAllData() {
     Serial.println(magBuffer[i].z, 6);
   }
 
-  // Send acceleration data
   for (int i = 0; i < accelCount; i++) {
     Serial.print("A,");
     Serial.print(accelBuffer[i].timestamp);
@@ -224,7 +224,6 @@ void sendAllData() {
     Serial.println(accelBuffer[i].z, 6);
   }
 
-  // Send Euler angles data
   for (int i = 0; i < eulerCount; i++) {
     Serial.print("E,");
     Serial.print(eulerBuffer[i].timestamp);
@@ -236,7 +235,6 @@ void sendAllData() {
     Serial.println(eulerBuffer[i].z, 6);
   }
 
-  // Send gyroscope data
   for (int i = 0; i < gyroCount; i++) {
     Serial.print("G,");
     Serial.print(gyroBuffer[i].timestamp);
@@ -248,7 +246,6 @@ void sendAllData() {
     Serial.println(gyroBuffer[i].z, 6);
   }
 
-  // End data block
   Serial.println("END_DATA_BLOCK");
 }
 
