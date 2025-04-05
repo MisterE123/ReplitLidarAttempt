@@ -4,26 +4,21 @@ from typing import Tuple
 
 class IMUAPI:
     def __init__(self, port: str = '/dev/ttyACM0', baud: int = 115200):
+        """Initialize IMU API with serial connection parameters"""
         self.imu = IMUCalibration(port, baud)
         
     def calibrate_time(self) -> float:
-        """Run time synchronization calibration"""
+        """Calibrate time offset between host and IMU"""
         return self.imu.time_calibration()
         
     def calibrate_gravity(self) -> Tuple[float, float, float]:
-        """Run gravity vector calibration"""
+        """Calibrate gravity vector with IMU held still"""
         return self.imu.gravity_calibration()
         
     def calibrate_gyro(self) -> None:
-        """Run gyroscope calibration"""
+        """Calibrate gyroscope bias with IMU held still"""
         self.imu.gyro_calibration()
         
     def calibrate_mag(self) -> None:
-        """Run magnetometer calibration"""
+        """Calibrate magnetometer by rotating IMU through all orientations"""
         self.imu.mag_calibration()
-
-# Example usage:
-if __name__ == '__main__':
-    imu_api = IMUAPI()
-    time_offset = imu_api.calibrate_time()
-    print(f"Time offset: {time_offset} microseconds")
