@@ -18,28 +18,31 @@ class IMUCalibrationError(IMUCommunicationError):
 
 
 class IMUAPI:
-    def __init__(self, config_path: str = 'python/config.ini', serial_timeout: float = 1.0):
+    # *** FIX: Changed default config_path from 'python/config.ini' to 'config.ini' ***
+    def __init__(self, config_path: str = 'config.ini', serial_timeout: float = 1.0):
         """
         Initialize IMU API: Read config, open serial port, wait for device.
 
         Args:
-            config_path: Path to the configuration file.
+            config_path: Path to the configuration file (relative to working dir, or absolute).
             serial_timeout: Default timeout in seconds for serial read operations.
                            Calibration methods might use longer internal timeouts.
         """
-        print("DEBUG: IMUAPI.__init__ started.") # ADDED
+        print("DEBUG: IMUAPI.__init__ started.")
         config = configparser.ConfigParser()
-        print(f"DEBUG: Reading config file: {config_path}") # ADDED
+        # Use the provided config_path argument (which defaults to 'config.ini')
+        print(f"DEBUG: Reading config file: {config_path}")
         read_files = config.read(config_path)
+        # Check if the file was successfully read
         if not read_files:
              raise FileNotFoundError(f"Configuration file not found or empty: {config_path}")
-        print("DEBUG: Config file read.") # ADDED
+        print("DEBUG: Config file read.")
 
         # --- Read IMU Connection Settings ---
         try:
             port = config['IMU']['port']
             baud = int(config['IMU'].get('baud_rate', '115200'))
-            print(f"DEBUG: Config - Port={port}, Baud={baud}") # ADDED
+            print(f"DEBUG: Config - Port={port}, Baud={baud}")
         except KeyError as e:
             raise KeyError(f"Missing key in config file '{config_path}': {e}")
         except ValueError as e:
@@ -50,7 +53,7 @@ class IMUAPI:
             # Load delays from config and store them as instance attributes
             self.still_delay = float(config['Calibration'].get('still_delay_seconds', 5.0))
             self.rotation_delay = float(config['Calibration'].get('rotation_delay_seconds', 10.0)) # Use get for defaults
-            print(f"DEBUG: Config - Still Delay={self.still_delay}, Rotation Delay={self.rotation_delay}") # ADDED
+            print(f"DEBUG: Config - Still Delay={self.still_delay}, Rotation Delay={self.rotation_delay}")
         except KeyError as e:
             # Handle missing [Calibration] section or keys if desired, or let it raise
             print(f"IMUAPI: Warning - [Calibration] section or keys missing in config: {e}. Using defaults.")
@@ -60,88 +63,102 @@ class IMUAPI:
             raise ValueError(f"Invalid numerical value for delays in config file '{config_path}': {e}")
 
         # --- Establish Serial Connection ---
+        self.ser = None # Initialize ser to None
         try:
-            print(f"DEBUG: Attempting to open serial port {port} at {baud} baud...") # ADDED
+            print(f"DEBUG: Attempting to open serial port {port} at {baud} baud...")
             # Create the serial port object - THIS CAN BLOCK/FAIL
             self.ser = serial.Serial(port, baud, timeout=serial_timeout)
-            print(f"DEBUG: Serial port {port} opened successfully.") # ADDED
+            print(f"DEBUG: Serial port {port} opened successfully.")
 
             # Wait for Arduino to reset/initialize after connection
-            print("DEBUG: Waiting 2 seconds for Arduino to initialize...") # ADDED
+            print("DEBUG: Waiting 2 seconds for Arduino to initialize...")
             time.sleep(2)
-            print("DEBUG: Finished 2-second wait.") # ADDED
+            print("DEBUG: Finished 2-second wait.")
 
             # Read and discard any initial messages from Arduino (e.g., "READY")
-            print("DEBUG: Attempting to flush initial Arduino output...") # ADDED
+            print("DEBUG: Attempting to flush initial Arduino output...")
             self._flush_initial_output()
-            print("DEBUG: Finished flushing initial output.") # ADDED
+            print("DEBUG: Finished flushing initial output.")
             print("IMUAPI: Ready.") # Indicate successful initialization
 
         except serial.SerialException as e:
             # Handle errors specifically related to opening the serial port
-            print(f"DEBUG: Failed to open serial port {port}: {e}") # ADDED
+            print(f"DEBUG: Failed to open serial port {port}: {e}")
+            # Ensure self.ser is None if connection failed
+            if self.ser and self.ser.is_open:
+                self.ser.close()
+            self.ser = None
             raise IMUCommunicationError(f"Failed to open serial port {port}: {e}")
-        except Exception as e: # ADDED generic exception catch here for debug
+        except Exception as e:
             # Catch any other unexpected errors during setup
-            print(f"DEBUG: Unexpected error during serial setup or flush: {e}") # ADDED
+            print(f"DEBUG: Unexpected error during serial setup or flush: {e}")
+            # Ensure self.ser is None if connection failed
+            if self.ser and self.ser.is_open:
+                self.ser.close()
+            self.ser = None
             raise # Re-raise the exception after printing
 
     def _flush_initial_output(self, timeout_seconds: float = 2.0):
         """Reads and discards any initial output from the Arduino after reset."""
-        print("DEBUG: _flush_initial_output started.") # ADDED
+        # Check if serial port is valid and open before trying to read
+        if not self.ser or not self.ser.is_open:
+            print("DEBUG: _flush_initial_output: Serial port not open, skipping flush.")
+            return
+
+        print("DEBUG: _flush_initial_output started.")
         start_time = time.time()
         # Loop for a maximum duration to avoid infinite wait
         while time.time() - start_time < timeout_seconds:
             try:
-                print("DEBUG: _flush_initial_output trying readline()...") # ADDED
+                # Check input buffer size first? Might not be reliable across platforms.
+                # bytes_waiting = self.ser.in_waiting
+                # if bytes_waiting == 0:
+                #     time.sleep(0.05) # Small sleep if nothing waiting
+                #     if self.ser.in_waiting == 0: # Check again
+                #          print("DEBUG: _flush_initial_output: No data in buffer.")
+                #          break # Exit if buffer seems empty
+
+                print("DEBUG: _flush_initial_output trying readline()...")
                 # Attempt to read a line from the serial port
                 # This will block until a newline is received or the timeout occurs
                 line_bytes = self.ser.readline()
-                line = line_bytes.decode(errors='ignore').strip()
-                if line:
-                    # If a line was received, print it for debugging purposes
-                    print(f"DEBUG: Discarding startup line: {line}") # MODIFIED
-                else:
+                if not line_bytes:
                     # If readline timed out (returned empty bytes), maybe no more data
-                    print("DEBUG: _flush_initial_output readline() timed out (empty).") # ADDED
+                    print("DEBUG: _flush_initial_output readline() timed out (empty).")
                     # Give it one more short try in case buffer wasn't full yet
                     time.sleep(0.1)
+                    # Check if port is still open before second read
+                    if not self.ser or not self.ser.is_open: break
                     if not self.ser.readline():
-                        print("DEBUG: _flush_initial_output second readline() timed out. Breaking flush loop.") # ADDED
+                        print("DEBUG: _flush_initial_output second readline() timed out. Breaking flush loop.")
                         break # Assume no more startup messages are coming
+                    else:
+                         # Got something on second read, decode and print it
+                         line = line_bytes.decode(errors='ignore').strip()
+                         print(f"DEBUG: Discarding startup line (after 2nd try): {line}")
+                else:
+                    # If a line was received, print it for debugging purposes
+                    line = line_bytes.decode(errors='ignore').strip()
+                    print(f"DEBUG: Discarding startup line: {line}")
+
             except serial.SerialTimeoutException:
                 # This exception isn't typically raised by readline with timeout > 0
                 # but handle defensively.
-                print("DEBUG: _flush_initial_output caught SerialTimeoutException. Breaking flush loop.") # ADDED
+                print("DEBUG: _flush_initial_output caught SerialTimeoutException. Breaking flush loop.")
                 break
             except Exception as e:
                  # Handle other potential errors during reading/decoding
-                 print(f"DEBUG: Warning - Error flushing initial output: {e}") # MODIFIED
+                 print(f"DEBUG: Warning - Error flushing initial output: {e}")
                  break # Stop flushing on other errors
-        print("DEBUG: _flush_initial_output finished.") # ADDED
+        print("DEBUG: _flush_initial_output finished.")
 
 
     def _send_command_and_wait_for_status(self, command: bytes, start_token: str, complete_token: str, fail_token: str, timeout_seconds: float) -> bool:
         """
         Sends a command, waits for start token, prints intermediate lines,
         and waits for a completion or failure token.
-
-        Args:
-            command: The command bytes to send (e.g., b'gravity_calibrate\n').
-            start_token: The expected first line indicating the command started.
-            complete_token: The line indicating successful completion.
-            fail_token: The line indicating failure.
-            timeout_seconds: Total time to wait for the complete/fail token after start.
-
-        Returns:
-            True if complete_token is received.
-
-        Raises:
-            IMUTimeoutError: If timeout occurs at any stage.
-            IMUCalibrationError: If fail_token is received.
-            IMUCommunicationError: For other serial or decoding issues.
         """
-        if not self.ser or not self.ser.is_open: # Added None check for self.ser
+        if not self.ser or not self.ser.is_open:
              raise IMUCommunicationError("Serial port is not open.")
 
         print(f"IMUAPI: Sending command: {command.decode().strip()}")
@@ -151,81 +168,80 @@ class IMUAPI:
         # --- Wait for START token ---
         start_wait_start_time = time.time()
         start_token_received = False
-        print(f"DEBUG: Waiting for start token '{start_token}'...") # ADDED
+        print(f"DEBUG: Waiting for start token '{start_token}'...")
         # Wait slightly longer than default serial timeout for the start token
-        while time.time() - start_wait_start_time < self.ser.timeout + 1:
+        # Use configured timeout + a buffer
+        start_timeout = (self.ser.timeout if self.ser.timeout else 0) + 1.0
+        while time.time() - start_wait_start_time < start_timeout:
              try:
+                # Check if port is still open
+                if not self.ser or not self.ser.is_open: raise IMUCommunicationError("Serial port closed unexpectedly.")
                 line_bytes = self.ser.readline()
                 if not line_bytes: continue # Read timed out, try again within window
 
-                line = line_bytes.decode().strip()
+                line = line_bytes.decode(errors='ignore').strip() # Ignore decode errors
                 print(f"IMUAPI: Received: {line}") # Log received line
 
                 if line.startswith(start_token):
-                    print(f"DEBUG: Start token '{start_token}' received.") # ADDED
+                    print(f"DEBUG: Start token '{start_token}' received.")
                     start_token_received = True
                     break # Start token found
                 # Optional: Handle unexpected lines before start token if needed
              except serial.SerialTimeoutException:
                  continue # Should not happen if timeout > 0, but handle defensively
-             except UnicodeDecodeError:
-                 print(f"IMUAPI: Warning - received non-UTF8 bytes waiting for start: {line_bytes}")
+             except UnicodeDecodeError as e: # Should be handled by errors='ignore'
+                 print(f"IMUAPI: Warning - UnicodeDecodeError waiting for start (should be ignored): {e}")
                  continue
              except Exception as e:
                  raise IMUCommunicationError(f"Error reading start token: {e}")
 
         if not start_token_received:
-             print(f"DEBUG: Timeout waiting for start token '{start_token}'.") # ADDED
+             print(f"DEBUG: Timeout waiting for start token '{start_token}'.")
              raise IMUTimeoutError(f"Timeout waiting for start token '{start_token}' after sending command '{command.decode().strip()}'")
 
 
         # --- Wait for COMPLETE or FAIL token ---
         wait_start_time = time.time()
-        print(f"DEBUG: Waiting for complete ('{complete_token}') or fail ('{fail_token}') token (timeout={timeout_seconds}s)...") # ADDED
+        print(f"DEBUG: Waiting for complete ('{complete_token}') or fail ('{fail_token}') token (timeout={timeout_seconds}s)...")
         while time.time() - wait_start_time < timeout_seconds:
             try:
+                # Check if port is still open
+                if not self.ser or not self.ser.is_open: raise IMUCommunicationError("Serial port closed unexpectedly.")
                 # Use the default serial timeout for readline within the loop
-                # to allow checking the outer loop's time condition frequently
                 line_bytes = self.ser.readline()
                 if not line_bytes:
                     # Readline timed out for this attempt, continue loop checking overall timeout
                     continue
 
-                line = line_bytes.decode().strip()
+                line = line_bytes.decode(errors='ignore').strip() # Ignore decode errors
                 print(f"IMUAPI: Received: {line}") # Log intermediate lines
 
                 if line.startswith(complete_token):
-                    print(f"DEBUG: Complete token '{complete_token}' received.") # ADDED
+                    print(f"DEBUG: Complete token '{complete_token}' received.")
                     return True # Success
                 if line.startswith(fail_token):
-                    print(f"DEBUG: Fail token '{fail_token}' received.") # ADDED
+                    print(f"DEBUG: Fail token '{fail_token}' received.")
                     raise IMUCalibrationError(f"Calibration failed. IMU reported: '{line}'")
 
             except serial.SerialTimeoutException:
                 # Readline timed out, continue loop checking overall timeout
                 continue
-            except UnicodeDecodeError:
-                print(f"IMUAPI: Warning - received non-UTF8 bytes waiting for status: {line_bytes}")
+            except UnicodeDecodeError as e: # Should be handled by errors='ignore'
+                print(f"IMUAPI: Warning - UnicodeDecodeError waiting for status (should be ignored): {e}")
                 continue
             except Exception as e:
                 raise IMUCommunicationError(f"Unexpected error while waiting for status: {e}")
 
         # If loop finishes without returning/raising, overall timeout occurred
-        print(f"DEBUG: Timeout waiting for complete/fail token.") # ADDED
+        print(f"DEBUG: Timeout waiting for complete/fail token.")
         raise IMUTimeoutError(f"Timeout ({timeout_seconds}s) waiting for '{complete_token}' or '{fail_token}' after receiving '{start_token}'")
 
 
     def calibrate_time(self) -> int:
         """
         Calibrate time offset between host and IMU. Sends 'time_calibrate' command.
-
-        Returns:
-            The timestamp (microseconds) sent back by the IMU as the epoch reference.
-
-        Raises:
-            IMUTimeoutError, IMUCommunicationError
         """
-        if not self.ser or not self.ser.is_open: # Added None check for self.ser
+        if not self.ser or not self.ser.is_open:
              raise IMUCommunicationError("Serial port is not open.")
 
         command = b'time_calibrate\n'
@@ -233,16 +249,26 @@ class IMUAPI:
         self.ser.write(command)
         self.ser.flush()
 
-        print("DEBUG: Waiting for TIME_ECHO response...") # ADDED
+        print("DEBUG: Waiting for TIME_ECHO response...")
         try:
             # Use slightly longer timeout for this specific response if needed
-            # Consider making this configurable or increasing default self.ser.timeout
-            response_bytes = self.ser.readline()
-            if not response_bytes:
-                 print("DEBUG: Timeout waiting for TIME_ECHO.") # ADDED
+            # Calculate timeout based on serial setting + buffer
+            read_timeout = (self.ser.timeout if self.ser.timeout else 0) + 1.0
+            start_wait = time.time()
+            response_bytes = b''
+            while time.time() - start_wait < read_timeout:
+                 # Check if port is still open
+                 if not self.ser or not self.ser.is_open: raise IMUCommunicationError("Serial port closed unexpectedly.")
+                 response_bytes = self.ser.readline()
+                 if response_bytes: # Got a response
+                      break
+                 # readline timed out, loop again if overall time allows
+            else: # Loop finished without break -> timeout
+                 print("DEBUG: Timeout waiting for TIME_ECHO.")
                  raise IMUTimeoutError("Timeout waiting for TIME_ECHO response.")
 
-            response = response_bytes.decode().strip()
+
+            response = response_bytes.decode(errors='ignore').strip() # Ignore decode errors
             print(f"IMUAPI: Received: {response}")
 
             if response.startswith('TIME_ECHO'):
@@ -252,34 +278,31 @@ class IMUAPI:
                     print(f"IMUAPI: Time calibrated. IMU Epoch (us): {timestamp}")
                     return timestamp
                 except (IndexError, ValueError):
-                     print(f"DEBUG: Failed to parse TIME_ECHO: {response}") # ADDED
+                     print(f"DEBUG: Failed to parse TIME_ECHO: {response}")
                      raise IMUCommunicationError(f"Failed to parse timestamp from TIME_ECHO response: {response}")
             else:
                 # Read a few more lines maybe? Sometimes READY comes after.
-                print(f"DEBUG: Unexpected response to time_calibrate: {response}. Reading extra lines...") # ADDED
-                extra_line = self.ser.readline().decode().strip()
-                print(f"IMUAPI: Received unexpected line after time_calibrate: {extra_line}")
+                print(f"DEBUG: Unexpected response to time_calibrate: {response}. Reading extra lines...")
+                # Use short timeout for extra lines
+                extra_line = self.ser.read_until(b'\n', timeout=0.5).decode(errors='ignore').strip()
+                print(f"IMUAPI: Received extra line after time_calibrate: {extra_line}")
                 raise IMUCommunicationError(f"Time calibration failed. Expected 'TIME_ECHO', got '{response}'")
 
-        except serial.SerialTimeoutException:
-             print("DEBUG: SerialTimeoutException waiting for TIME_ECHO.") # ADDED
+        except serial.SerialTimeoutException: # Should be caught by loop timeout logic now
+             print("DEBUG: SerialTimeoutException waiting for TIME_ECHO (should have been caught by loop).")
              raise IMUTimeoutError("Timeout waiting for TIME_ECHO response.")
-        except UnicodeDecodeError as e:
-             print(f"DEBUG: UnicodeDecodeError reading TIME_ECHO response: {e}") # ADDED
+        except UnicodeDecodeError as e: # Should be handled by errors='ignore'
+             print(f"DEBUG: UnicodeDecodeError reading TIME_ECHO response (should be ignored): {e}")
              raise IMUCommunicationError(f"Failed to decode TIME_ECHO response: {e}")
         except Exception as e:
-             print(f"DEBUG: Unexpected error during time calibration: {e}") # ADDED
+             print(f"DEBUG: Unexpected error during time calibration: {e}")
              raise IMUCommunicationError(f"Error during time calibration: {e}")
 
     def calibrate_gravity(self, timeout_seconds: float = 5.0) -> None:
         """
         Calibrate gravity compensation with IMU held still. Sends 'gravity_calibrate'.
-        Uses the generic command sending function.
-
-        Args:
-            timeout_seconds: How long to wait for the calibration to complete.
         """
-        print("DEBUG: Starting gravity calibration...") # ADDED
+        print("DEBUG: Starting gravity calibration...")
         self._send_command_and_wait_for_status(
             command=b'gravity_calibrate\n',
             start_token='GRAVITY_CAL_START',
@@ -292,12 +315,8 @@ class IMUAPI:
     def calibrate_gyro(self, timeout_seconds: float = 5.0) -> None:
         """
         Calibrate gyroscope bias with IMU held still. Sends 'gyro_calibrate'.
-        Uses the generic command sending function.
-
-        Args:
-            timeout_seconds: How long to wait for the calibration to complete.
         """
-        print("DEBUG: Starting gyro calibration...") # ADDED
+        print("DEBUG: Starting gyro calibration...")
         self._send_command_and_wait_for_status(
             command=b'gyro_calibrate\n',
             start_token='GYRO_CAL_START',
@@ -310,14 +329,8 @@ class IMUAPI:
     def calibrate_mag(self, timeout_seconds: float = 15.0) -> None:
         """
         Calibrate magnetometer by rotating IMU through all orientations. Sends 'mag_calibrate'.
-        The Arduino sketch handles the 10-second rotation period internally.
-        Uses the generic command sending function.
-
-        Args:
-            timeout_seconds: How long to wait for the calibration to complete
-                             (should be > 10s to allow for rotation).
         """
-        print("DEBUG: Starting magnetometer calibration...") # ADDED
+        print("DEBUG: Starting magnetometer calibration...")
         if timeout_seconds <= 10.0:
              print("IMUAPI: Warning - Magnetometer calibration timeout should ideally be greater than 10 seconds.")
 
@@ -333,14 +346,8 @@ class IMUAPI:
     def start_collection(self) -> bool:
         """
         Sends the command 'start_collection' to start data streaming on the IMU.
-
-        Returns:
-             True if collection started successfully, False otherwise (e.g., time not calibrated).
-
-        Raises:
-             IMUTimeoutError, IMUCommunicationError if serial communication fails.
         """
-        if not self.ser or not self.ser.is_open: # Added None check for self.ser
+        if not self.ser or not self.ser.is_open:
              raise IMUCommunicationError("Serial port is not open.")
 
         command = b'start_collection\n'
@@ -349,45 +356,48 @@ class IMUAPI:
         self.ser.flush()
 
         # Read response lines to confirm start or get error
-        print("DEBUG: Waiting for start_collection response...") # ADDED
+        print("DEBUG: Waiting for start_collection response...")
         start_time = time.time()
         response_found = False
         success = False
         # Wait slightly longer than default timeout for response
-        while time.time() - start_time < self.ser.timeout + 1:
+        read_timeout = (self.ser.timeout if self.ser.timeout else 0) + 1.0
+        while time.time() - start_time < read_timeout:
              try:
-                line_bytes = self.ser.readline()
-                if not line_bytes: continue # Timeout on this read, continue loop
+                 # Check if port is still open
+                 if not self.ser or not self.ser.is_open: raise IMUCommunicationError("Serial port closed unexpectedly.")
+                 line_bytes = self.ser.readline()
+                 if not line_bytes: continue # Timeout on this read, continue loop
 
-                line = line_bytes.decode().strip()
-                print(f"IMUAPI: Received: {line}")
-                if line.startswith("STARTING_COLLECTION"):
-                    print("DEBUG: 'STARTING_COLLECTION' received.") # ADDED
-                    response_found = True
-                    success = True
-                    break
-                elif line.startswith("ERROR: Time must be calibrated first"):
-                     print(f"IMUAPI: Error from IMU: {line}")
+                 line = line_bytes.decode(errors='ignore').strip() # Ignore decode errors
+                 print(f"IMUAPI: Received: {line}")
+                 if line.startswith("STARTING_COLLECTION"):
+                     print("DEBUG: 'STARTING_COLLECTION' received.")
                      response_found = True
-                     success = False
+                     success = True
                      break
-                elif line.startswith("WARNING: Already collecting"): # Handle warning
-                     print(f"IMUAPI: Warning from IMU: {line}")
-                     response_found = True
-                     success = False # Treat as failure to start *new* collection
-                     break
-                # Ignore other potential lines like READY if sent unexpectedly
+                 elif line.startswith("ERROR: Time must be calibrated first"):
+                      print(f"IMUAPI: Error from IMU: {line}")
+                      response_found = True
+                      success = False
+                      break
+                 elif line.startswith("WARNING: Already collecting"): # Handle warning
+                      print(f"IMUAPI: Warning from IMU: {line}")
+                      response_found = True
+                      success = False # Treat as failure to start *new* collection
+                      break
+                 # Ignore other potential lines like READY if sent unexpectedly
 
              except serial.SerialTimeoutException:
                  continue
-             except UnicodeDecodeError:
-                 print(f"IMUAPI: Warning - received non-UTF8 bytes response: {line_bytes}")
+             except UnicodeDecodeError as e: # Should be handled by errors='ignore'
+                 print(f"IMUAPI: Warning - UnicodeDecodeError reading start_collection response (should be ignored): {e}")
                  continue
              except Exception as e:
                  raise IMUCommunicationError(f"Error reading start_collection response: {e}")
 
         if not response_found:
-             print("DEBUG: Timeout waiting for start_collection response.") # ADDED
+             print("DEBUG: Timeout waiting for start_collection response.")
              raise IMUTimeoutError("Timeout waiting for response after start_collection command.")
 
         return success
@@ -396,14 +406,8 @@ class IMUAPI:
     def stop_collection(self) -> bool:
         """
         Sends the command 'stop_collection' to stop data streaming on the IMU.
-
-        Returns:
-             True if collection stopped successfully or was already stopped.
-
-        Raises:
-             IMUTimeoutError, IMUCommunicationError if serial communication fails.
         """
-        if not self.ser or not self.ser.is_open: # Added None check for self.ser
+        if not self.ser or not self.ser.is_open:
              raise IMUCommunicationError("Serial port is not open.")
 
         command = b'stop_collection\n'
@@ -412,76 +416,69 @@ class IMUAPI:
         self.ser.flush()
 
         # Read response lines to confirm stop
-        print("DEBUG: Waiting for stop_collection response...") # ADDED
+        print("DEBUG: Waiting for stop_collection response...")
         start_time = time.time()
         response_found = False
         success = False
         # Wait slightly longer than default timeout for response
-        while time.time() - start_time < self.ser.timeout + 1:
+        read_timeout = (self.ser.timeout if self.ser.timeout else 0) + 1.0
+        while time.time() - start_time < read_timeout:
             try:
+                # Check if port is still open
+                if not self.ser or not self.ser.is_open: raise IMUCommunicationError("Serial port closed unexpectedly.")
                 line_bytes = self.ser.readline()
                 if not line_bytes: continue # Timeout on this read, continue loop
 
-                line = line_bytes.decode().strip()
+                line = line_bytes.decode(errors='ignore').strip() # Ignore decode errors
                 print(f"IMUAPI: Received: {line}")
                 # Arduino sends STOPPING_COLLECTION then READY and menu
                 # We only care about the first confirmation.
                 if line.startswith("STOPPING_COLLECTION"):
-                    print("DEBUG: 'STOPPING_COLLECTION' received.") # ADDED
+                    print("DEBUG: 'STOPPING_COLLECTION' received.")
                     response_found = True
                     success = True
-                    break # Found the primary success message
+                    # Don't break immediately, consume rest of expected output block
+                    # break # Found the primary success message
                 elif line.startswith("INFO: Not currently collecting data"):
-                     print("DEBUG: 'INFO: Not currently collecting data' received.") # ADDED
+                     print("DEBUG: 'INFO: Not currently collecting data' received.")
                      response_found = True
                      success = True # Treat as success (already stopped)
-                     break
+                     # Don't break immediately, consume rest of expected output block
+                     # break
                 elif line.startswith("READY"): # If we missed the stop message but got READY
                      if not response_found: # Check if we already found the target message
                           print("IMUAPI: Received READY, assuming stop was successful or already stopped.")
                           response_found = True
                           success = True
-                     # Don't break yet, might still get the STOPPING message or menu lines
+                     # Break here, READY signifies end of command processing usually
+                     break
                 # Ignore menu lines etc.
 
             except serial.SerialTimeoutException:
                  continue
-            except UnicodeDecodeError:
-                print(f"IMUAPI: Warning - received non-UTF8 bytes response: {line_bytes}")
+            except UnicodeDecodeError as e: # Should be handled by errors='ignore'
+                print(f"IMUAPI: Warning - UnicodeDecodeError reading stop_collection response (should be ignored): {e}")
                 continue
             except Exception as e:
                  raise IMUCommunicationError(f"Error reading stop_collection response: {e}")
 
         if not response_found:
              # If timeout, maybe it stopped silently? Hard to know for sure. Let's raise.
-             print("DEBUG: Timeout waiting for stop_collection response.") # ADDED
+             print("DEBUG: Timeout waiting for stop_collection response.")
              raise IMUTimeoutError("Timeout waiting for response after stop_collection command.")
 
         # Consume the rest of the READY message block if Arduino sends more
-        print("DEBUG: Flushing output after stop_collection...") # ADDED
-        self._flush_initial_output(timeout_seconds=0.5) # Quick flush
-        print("DEBUG: Finished flushing after stop_collection.") # ADDED
+        # print("DEBUG: Flushing output after stop_collection...") # Maybe not needed if we wait for READY
+        # self._flush_initial_output(timeout_seconds=0.5) # Quick flush
+        # print("DEBUG: Finished flushing after stop_collection.")
 
         return success
 
     def read_data_block(self, read_timeout_seconds: float = 2.0) -> Optional[Dict[str, List[Dict]]]:
         """
         Reads one complete data block (BEGIN_DATA_BLOCK to END_DATA_BLOCK) from the IMU.
-        This is a blocking call.
-
-        Args:
-            read_timeout_seconds: Max time to wait for a complete block to arrive.
-
-        Returns:
-            A dictionary containing lists of sensor readings ('M', 'A', 'E', 'G'),
-            or None if a complete block is not received within the timeout.
-            Each reading is a dict {'timestamp': int, 'x': float, 'y': float, 'z': float}.
-
-        Raises:
-            IMUTimeoutError if timeout occurs *while receiving data inside* a block.
-            IMUCommunicationError for parsing or decoding errors.
         """
-        if not self.ser or not self.ser.is_open: # Added None check for self.ser
+        if not self.ser or not self.ser.is_open:
              raise IMUCommunicationError("Serial port is not open.")
 
         # Initialize data structures for the block
@@ -496,13 +493,15 @@ class IMUAPI:
         # Loop until overall timeout
         while time.time() - start_time < read_timeout_seconds:
             try:
+                # Check if port is still open
+                if not self.ser or not self.ser.is_open: raise IMUCommunicationError("Serial port closed unexpectedly.")
                 # Read a line using the default serial timeout
                 line_bytes = self.ser.readline()
                 if not line_bytes:
                     # Readline timed out for this attempt.
                     if in_block:
                          # If we were inside a block, data stopped unexpectedly mid-stream.
-                         print(f"DEBUG: Timeout occurred *inside* data block after {time.time() - start_time:.2f}s.") # ADDED
+                         print(f"DEBUG: Timeout occurred *inside* data block after {time.time() - start_time:.2f}s.")
                          raise IMUTimeoutError(f"Timeout occurred *inside* data block after {time.time() - start_time:.2f}s.")
                     else:
                          # Not in a block, just means no data arrived in this read cycle.
@@ -512,14 +511,14 @@ class IMUAPI:
                              return None # Indicate no block found within overall timeout
                          continue # Continue waiting for block start
 
-                # Decode the received line
-                line = line_bytes.decode().strip()
+                # Decode the received line, ignoring errors
+                line = line_bytes.decode(errors='ignore').strip()
                 # Optional: print(f"DEBUG Read: {line}") # Very noisy debug
 
                 if not in_block:
                     # --- Waiting for Block Start ---
                     if line.startswith("BEGIN_DATA_BLOCK"):
-                        print(f"DEBUG: Received BEGIN_DATA_BLOCK: {line}") # ADDED
+                        print(f"DEBUG: Received BEGIN_DATA_BLOCK: {line}")
                         parts = line.split(',')
                         if len(parts) != 5:
                             print(f"IMUAPI: Warning - Malformed BEGIN_DATA_BLOCK: {line}")
@@ -544,7 +543,7 @@ class IMUAPI:
                 else:
                     # --- Inside a Block ---
                     if line.startswith("END_DATA_BLOCK"):
-                        print(f"DEBUG: Received END_DATA_BLOCK. Got M:{received_counts['M']}, A:{received_counts['A']}, E:{received_counts['E']}, G:{received_counts['G']}") # ADDED
+                        print(f"DEBUG: Received END_DATA_BLOCK. Got M:{received_counts['M']}, A:{received_counts['A']}, E:{received_counts['E']}, G:{received_counts['G']}")
                         in_block = False # Exiting the block
                         # Verify counts (optional but recommended)
                         if (received_counts['M'] == expected_counts['M'] and
@@ -594,7 +593,7 @@ class IMUAPI:
             except serial.SerialTimeoutException:
                 # Should be handled by checking `if not line_bytes:` above
                  if in_block:
-                     print(f"DEBUG: SerialTimeoutException occurred *inside* data block after {time.time() - start_time:.2f}s.") # ADDED
+                     print(f"DEBUG: SerialTimeoutException occurred *inside* data block after {time.time() - start_time:.2f}s.")
                      raise IMUTimeoutError(f"Timeout occurred *inside* data block (SerialTimeoutException) after {time.time() - start_time:.2f}s.")
                  else:
                      # Check overall timeout before continuing
@@ -602,9 +601,9 @@ class IMUAPI:
                           # print("DEBUG: Overall timeout exceeded while waiting for data (SerialTimeoutException).") # Optional Debug
                           return None
                       continue
-            except UnicodeDecodeError:
+            except UnicodeDecodeError as e: # Should be handled by errors='ignore'
                 # Received bytes that couldn't be decoded as UTF-8
-                print(f"IMUAPI: Warning - received non-UTF8 bytes: {line_bytes}")
+                print(f"IMUAPI: Warning - UnicodeDecodeError processing line (should be ignored): {e}")
                 continue # Ignore undecodable lines
             except Exception as e:
                 # Log other unexpected errors during block processing
@@ -618,7 +617,7 @@ class IMUAPI:
         # If loop finishes, the overall read_timeout_seconds was exceeded
         if in_block:
              # Timeout occurred after BEGIN but before END was received
-             print(f"DEBUG: Overall read_data_block timeout ({read_timeout_seconds}s) occurred *inside* a block.") # ADDED
+             print(f"DEBUG: Overall read_data_block timeout ({read_timeout_seconds}s) occurred *inside* a block.")
              # Decide whether to return partial data or None/raise error
              # Returning partial data might be useful sometimes, but indicates an issue.
              print("IMUAPI: Warning - Timeout occurred after block started but before END_DATA_BLOCK received.")
@@ -635,7 +634,7 @@ class IMUAPI:
 
     def close(self):
         """Closes the serial port if it's open."""
-        print("DEBUG: IMUAPI.close() called.") # ADDED
+        print("DEBUG: IMUAPI.close() called.")
         if self.ser and self.ser.is_open:
             try:
                 self.ser.close()
@@ -643,7 +642,7 @@ class IMUAPI:
             except Exception as e:
                  print(f"IMUAPI: Error closing serial port: {e}")
         else:
-            print("DEBUG: Serial port was already closed or not initialized.") # ADDED
+            print("DEBUG: Serial port was already closed or not initialized.")
         self.ser = None # Indicate port is closed/unavailable
 
 
@@ -671,7 +670,7 @@ if __name__ == '__main__':
     try:
         print("Initializing IMUAPI...")
         # Use a slightly longer default timeout for potentially slower Arduinos or initial connection
-        imu_instance = IMUAPI(config_path=CONFIG_FILE, serial_timeout=2.0)
+        imu_instance = IMUAPI(config_path=CONFIG_FILE, serial_timeout=2.0) # Now uses default 'config.ini'
 
         # --- Calibration Sequence ---
         print("\nStarting Calibration Example...")
