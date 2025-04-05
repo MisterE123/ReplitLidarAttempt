@@ -66,8 +66,7 @@ void printReadyMessage() {
   Serial.println("READY");
   Serial.println("Available commands:");
   Serial.println("  time_calibrate - Start time synchronization");
-  Serial.println("  gravity_calibrate - Calibrate gravity compensation");
-  Serial.println("  gyro_calibrate - Calibrate gyroscope bias");
+  Serial.println("  still_calibrate - Calibrate gravity and gyro (keep device still)");
   Serial.println("  mag_calibrate - Calibrate magnetometer (10s rotation)");
   Serial.println("  start_collection - Begin data collection");
   Serial.println("  stop_collection - Stop data collection");
