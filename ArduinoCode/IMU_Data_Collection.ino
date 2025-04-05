@@ -49,6 +49,11 @@ void setup() {
     while (1);
   }
 
+  Serial.println("Send 'calibrate' to start gravity calibration...");
+  while (!Serial.available() || Serial.readStringUntil('\n') != "calibrate") {
+    delay(100);
+  }
+
   // Wait for IMU to settle
   delay(1000);
 
