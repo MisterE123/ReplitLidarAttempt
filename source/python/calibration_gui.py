@@ -51,13 +51,19 @@ class CalibrationGUI_Tk:
         # Place status at the bottom, spanning across columns if using grid
         self.status_var = tk.StringVar()
         self.status_label = ttk.Label(root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W, padding="5")
-        self.status_label.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
-        self.set_status("Initializing...", "") # Initial status
+        # Pack status label first so it appears above instructions
+        self.status_label.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(0, 5)) # pady order (top, bottom)
 
         # --- Instructions Display ---
+        # *** FIX START: Define instructions_var and instructions_label BEFORE first set_status call ***
         self.instructions_var = tk.StringVar()
         self.instructions_label = ttk.Label(root, textvariable=self.instructions_var, relief=tk.SUNKEN, anchor=tk.W, padding="5")
-        self.instructions_label.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
+        # Pack instructions label second so it appears below status
+        self.instructions_label.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(5, 0)) # pady order (top, bottom)
+        # *** FIX END ***
+
+        # --- Set Initial Status (Now safe to call) ---
+        self.set_status("Initializing...", "") # Initial status
 
         # --- Setup UI Elements ---
         self._setup_main_menu_frame()
@@ -97,7 +103,8 @@ class CalibrationGUI_Tk:
             if self.imu:
                 self.set_status("IMU Connected. Ready.", "")
                 # Enable the main calibrate button now that IMU is ready
-                self.calibrate_button.config(state=tk.NORMAL)
+                if hasattr(self, 'calibrate_button'): # Check if button exists yet
+                    self.calibrate_button.config(state=tk.NORMAL)
                 # Start by showing the main menu
                 self._show_frame(self.main_menu_frame)
             else:
@@ -105,7 +112,8 @@ class CalibrationGUI_Tk:
                 self.set_status(self.imu_init_error or "Failed to connect to IMU.",
                                 "Please check config.ini and connection.")
                 # Keep calibrate button disabled
-                self.calibrate_button.config(state=tk.DISABLED)
+                if hasattr(self, 'calibrate_button'): # Check if button exists yet
+                    self.calibrate_button.config(state=tk.DISABLED)
                 # Show main menu frame even on error, but button is disabled
                 self._show_frame(self.main_menu_frame)
 
@@ -118,12 +126,12 @@ class CalibrationGUI_Tk:
         label = ttk.Label(self.main_menu_frame, text="Main Menu", font=("Helvetica", 16))
         label.pack(pady=20)
 
-        # Calibrate Button - Initially disabled, enabled when IMU connects
+        # Calibrate Button - State determined by _check_imu_init
         self.calibrate_button = ttk.Button(
             self.main_menu_frame,
             text="Calibrate IMU",
             command=self._go_to_calibration,
-            state=tk.DISABLED # Enabled by _check_imu_init on success
+            state=tk.DISABLED # Start disabled, enabled later if IMU connects
         )
         self.calibrate_button.pack(pady=30, ipadx=20, ipady=10) # Make button larger
 
@@ -182,52 +190,77 @@ class CalibrationGUI_Tk:
     def set_status(self, status: str, instructions: str = ""):
         """Updates the status and instruction labels."""
         print(f"GUI Status: {status} | Instructions: {instructions}") # Also print to console
-        self.status_var.set(f"Status: {status}")
-        self.instructions_var.set(f"Instructions: {instructions}")
+        # Check if attributes exist before setting - important during early init
+        if hasattr(self, 'status_var'):
+            self.status_var.set(f"Status: {status}")
+        if hasattr(self, 'instructions_var'):
+            self.instructions_var.set(f"Instructions: {instructions}")
         # self.root.update_idletasks() # Force GUI update if needed, but usually automatic
 
     def _set_calibration_buttons_state(self, state):
         """Enable or disable calibration step buttons."""
-        self.still_cal_button.config(state=state)
-        self.motion_cal_button.config(state=state)
-        self.done_button.config(state=state) # Also control done button
+        # Check if buttons exist before configuring (might be called early)
+        if hasattr(self, 'still_cal_button'):
+            self.still_cal_button.config(state=state)
+        if hasattr(self, 'motion_cal_button'):
+            self.motion_cal_button.config(state=state)
+        if hasattr(self, 'done_button'):
+            self.done_button.config(state=state)
 
     def _go_to_calibration(self):
         """Callback for the main 'Calibrate IMU' button."""
         if not self.imu:
             self.set_status("Error: IMU not connected.", "Cannot calibrate.")
+            messagebox.showerror("Error", "IMU not connected.") # Show popup too
             return
 
         print("DEBUG: Calibrate button clicked. Attempting time calibration...")
         self.set_status("Calibrating time...", "Communicating with IMU...")
         self.calibrate_button.config(state=tk.DISABLED) # Disable while attempting
 
+        # Run time calibration in a separate thread to avoid blocking GUI if it takes time
+        cal_thread = threading.Thread(target=self._perform_time_calibration, daemon=True)
+        cal_thread.start()
+
+    def _perform_time_calibration(self):
+        """Performs time calibration (called from _go_to_calibration thread)."""
         try:
-            # Time calibration is usually quick, do it directly
+            # Time calibration is usually quick, but run in thread just in case
             offset = self.imu.calibrate_time()
-            self.set_status(f"Time calibration successful.", f"IMU Offset: {offset} μs. Choose next step.")
-            self.current_state = STATE_CALIBRATING
-            self._set_calibration_buttons_state(tk.NORMAL) # Enable calibration step buttons
-            self._show_frame(self.calibration_frame) # Switch to calibration frame
+            # Schedule GUI updates back on the main thread
+            self.root.after(0, self._time_calibration_success, offset)
 
         except (IMUCommunicationError, IMUTimeoutError) as e:
-            self.set_status(f"Time calibration failed: {str(e)}", "Check connection and retry.")
-            messagebox.showerror("Time Calibration Failed", f"{str(e)}\nCheck connection and retry.")
-            self.calibrate_button.config(state=tk.NORMAL) # Re-enable button on failure
+            self.root.after(0, self._time_calibration_failure, e)
         except Exception as e:
-            self.set_status(f"Unexpected Error during time calibration: {str(e)}", "Check logs.")
-            messagebox.showerror("Time Calibration Error", f"An unexpected error occurred:\n{str(e)}")
-            self.calibrate_button.config(state=tk.NORMAL) # Re-enable button on failure
+            self.root.after(0, self._time_calibration_failure, e)
+
+    def _time_calibration_success(self, offset):
+        """GUI update after successful time calibration (runs in main thread)."""
+        self.set_status(f"Time calibration successful.", f"IMU Offset: {offset} μs. Choose next step.")
+        self.current_state = STATE_CALIBRATING
+        self._set_calibration_buttons_state(tk.NORMAL) # Enable calibration step buttons
+        self._show_frame(self.calibration_frame) # Switch to calibration frame
+
+    def _time_calibration_failure(self, error):
+        """GUI update after failed time calibration (runs in main thread)."""
+        error_str = str(error)
+        self.set_status(f"Time calibration failed: {error_str}", "Check connection and retry.")
+        messagebox.showerror("Time Calibration Failed", f"{error_str}\nCheck connection and retry.")
+        # Re-enable main calibrate button on failure if it exists
+        if hasattr(self, 'calibrate_button'):
+             self.calibrate_button.config(state=tk.NORMAL)
+
 
     def _go_to_main_menu(self):
         """Callback for the 'Done' button in calibration frame."""
         self.current_state = STATE_MAIN_MENU
         self._show_frame(self.main_menu_frame)
         # Re-enable main calibrate button if IMU is still connected
-        if self.imu:
+        if self.imu and hasattr(self, 'calibrate_button'):
              self.calibrate_button.config(state=tk.NORMAL)
              self.set_status("IMU Connected. Ready.", "")
-        else:
+        elif hasattr(self, 'calibrate_button'):
              self.calibrate_button.config(state=tk.DISABLED)
              self.set_status(self.imu_init_error or "IMU Disconnected.", "Cannot calibrate.")
         self.set_status("Returned to Main Menu.", "")
@@ -250,7 +283,7 @@ class CalibrationGUI_Tk:
             self._set_calibration_buttons_state(tk.DISABLED) # Disable buttons during wait/cal
 
             # Schedule the actual calibration after the delay
-            self.root.after(delay_ms, self._perform_actual_still_calibration)
+            self.root.after(delay_ms, self._schedule_still_calibration_thread)
 
         except AttributeError:
             self.set_status("Error: Could not find delay settings.", "Check IMU API/config.")
@@ -261,30 +294,43 @@ class CalibrationGUI_Tk:
             messagebox.showerror("Error", f"Unexpected error: {str(e)}")
             self._set_calibration_buttons_state(tk.NORMAL) # Re-enable on error
 
+    def _schedule_still_calibration_thread(self):
+        """Schedules the still calibration to run in a background thread."""
+        # Run actual calibration in thread as it involves communication
+        cal_thread = threading.Thread(target=self._perform_actual_still_calibration, daemon=True)
+        cal_thread.start()
+
     def _perform_actual_still_calibration(self):
-        """Called by root.after() to perform the still calibration steps."""
+        """Called by thread to perform the still calibration steps."""
         try:
             # Gravity Calibration
-            self.set_status("Calibrating Gravity...", "Keep device perfectly still.")
-            self.root.update_idletasks() # Ensure status update is visible
+            # Update status via root.after to run in main thread
+            self.root.after(0, lambda: self.set_status("Calibrating Gravity...", "Keep device perfectly still."))
+            # Communication happens here - might block thread briefly
             self.imu.calibrate_gravity()
-            self.set_status("Gravity calibrated.", "Starting Gyro calibration (keep still)...")
-            self.root.update_idletasks() # Ensure status update is visible
+            self.root.after(0, lambda: self.set_status("Gravity calibrated.", "Starting Gyro calibration (keep still)..."))
 
             # Gyro Calibration (immediately after gravity)
+            # Communication happens here - might block thread briefly
             self.imu.calibrate_gyro()
-            self.set_status("Still Calibration Complete.", "Gravity & Gyro calibrated.")
+            self.root.after(0, lambda: self.set_status("Still Calibration Complete.", "Gravity & Gyro calibrated."))
             self.is_calibrated = True # Example flag
 
         except (IMUCommunicationError, IMUCalibrationError, IMUTimeoutError) as e:
-            self.set_status(f"Still Calibration Error: {str(e)}", "Please try again.")
-            messagebox.showerror("Still Calibration Error", f"{str(e)}\nPlease try again.")
+            # Schedule error display back on main thread
+            self.root.after(0, self._still_calibration_failure, e)
         except Exception as e:
-            self.set_status(f"Unexpected Error during still calibration: {str(e)}", "Check logs.")
-            messagebox.showerror("Still Calibration Error", f"An unexpected error occurred:\n{str(e)}")
+            # Schedule error display back on main thread
+            self.root.after(0, self._still_calibration_failure, e)
         finally:
-            # Re-enable buttons regardless of success or failure
-             self._set_calibration_buttons_state(tk.NORMAL)
+            # Schedule button re-enable back on main thread
+             self.root.after(0, lambda: self._set_calibration_buttons_state(tk.NORMAL))
+
+    def _still_calibration_failure(self, error):
+        """GUI update after failed still calibration (runs in main thread)."""
+        error_str = str(error)
+        self.set_status(f"Still Calibration Error: {error_str}", "Please try again.")
+        messagebox.showerror("Still Calibration Error", f"{error_str}\nPlease try again.")
 
 
     def _do_motion_calibration_tk(self):
@@ -302,7 +348,7 @@ class CalibrationGUI_Tk:
             self._set_calibration_buttons_state(tk.DISABLED) # Disable buttons during wait/cal
 
             # Schedule the actual calibration after the delay
-            self.root.after(delay_ms, self._perform_actual_motion_calibration)
+            self.root.after(delay_ms, self._schedule_motion_calibration_thread)
 
         except AttributeError:
             self.set_status("Error: Could not find delay settings.", "Check IMU API/config.")
@@ -313,24 +359,37 @@ class CalibrationGUI_Tk:
             messagebox.showerror("Error", f"Unexpected error: {str(e)}")
             self._set_calibration_buttons_state(tk.NORMAL) # Re-enable on error
 
+    def _schedule_motion_calibration_thread(self):
+        """Schedules the motion calibration to run in a background thread."""
+        # Run actual calibration in thread as it involves communication
+        cal_thread = threading.Thread(target=self._perform_actual_motion_calibration, daemon=True)
+        cal_thread.start()
+
     def _perform_actual_motion_calibration(self):
-        """Called by root.after() to perform the motion calibration step."""
+        """Called by thread to perform the motion calibration step."""
         try:
-            self.set_status("Calibrating Magnetometer...", "Rotate IMU slowly in all directions for ~10s.")
-            self.root.update_idletasks() # Ensure status update is visible
-            self.imu.calibrate_mag() # API handles the timing internally
-            self.set_status("Motion Calibration Complete.", "Magnetometer calibrated.")
+            # Update status via root.after to run in main thread
+            self.root.after(0, lambda: self.set_status("Calibrating Magnetometer...", "Rotate IMU slowly in all directions for ~10s."))
+            # API handles the timing internally, but communication happens here
+            self.imu.calibrate_mag()
+            self.root.after(0, lambda: self.set_status("Motion Calibration Complete.", "Magnetometer calibrated."))
             self.is_calibrated = True # Example flag
 
         except (IMUCommunicationError, IMUCalibrationError, IMUTimeoutError) as e:
-            self.set_status(f"Motion Calibration Error: {str(e)}", "Please try again.")
-            messagebox.showerror("Motion Calibration Error", f"{str(e)}\nPlease try again.")
+            # Schedule error display back on main thread
+            self.root.after(0, self._motion_calibration_failure, e)
         except Exception as e:
-            self.set_status(f"Unexpected Error during motion calibration: {str(e)}", "Check logs.")
-            messagebox.showerror("Motion Calibration Error", f"An unexpected error occurred:\n{str(e)}")
+            # Schedule error display back on main thread
+            self.root.after(0, self._motion_calibration_failure, e)
         finally:
-            # Re-enable buttons regardless of success or failure
-            self._set_calibration_buttons_state(tk.NORMAL)
+            # Schedule button re-enable back on main thread
+            self.root.after(0, lambda: self._set_calibration_buttons_state(tk.NORMAL))
+
+    def _motion_calibration_failure(self, error):
+        """GUI update after failed motion calibration (runs in main thread)."""
+        error_str = str(error)
+        self.set_status(f"Motion Calibration Error: {error_str}", "Please try again.")
+        messagebox.showerror("Motion Calibration Error", f"{error_str}\nPlease try again.")
 
 
     def _on_closing(self):
@@ -338,6 +397,7 @@ class CalibrationGUI_Tk:
         print("DEBUG: Window closing...")
         if self.imu:
             print("Closing serial port...")
+            # Run close in thread? Usually okay in main thread on exit.
             try:
                 self.imu.close()
             except Exception as e:
