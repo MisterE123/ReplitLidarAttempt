@@ -14,8 +14,7 @@ class CalibrationGUI:
         
         self.steps = [
             ("Time Calibration", "Measuring communication latency...", self.calibrate_time),
-            ("Gravity Calibration", "Place IMU flat on surface", self.calibrate_gravity),
-            ("Gyroscope Calibration", "Keep IMU stationary", self.calibrate_gyro),
+            ("Static Calibrations", "Place IMU flat and keep stationary", self.calibrate_static),
             ("Magnetometer Calibration", "Rotate IMU in all directions", self.calibrate_mag)
         ]
         self.current_step = 0
@@ -29,11 +28,11 @@ class CalibrationGUI:
         response = requests.get('http://localhost:5000/calibrate/time')
         return response.json()['offset_us']
         
-    def calibrate_gravity(self):
-        return requests.get('http://localhost:5000/calibrate/gravity').json()
-        
-    def calibrate_gyro(self):
-        return requests.get('http://localhost:5000/calibrate/gyro').json()
+    def calibrate_static(self):
+        # Do gravity and gyro calibration together while device is still
+        gravity_result = requests.get('http://0.0.0.0:5000/calibrate/gravity').json()
+        gyro_result = requests.get('http://0.0.0.0:5000/calibrate/gyro').json()
+        return {'gravity': gravity_result, 'gyro': gyro_result}
         
     def calibrate_mag(self):
         return requests.get('http://localhost:5000/calibrate/mag').json()
