@@ -1,30 +1,29 @@
 
-from flask import Flask, jsonify
 from imu_calibration import IMUCalibration
-import time
+from typing import Tuple
 
-app = Flask(__name__)
-imu = IMUCalibration()
+class IMUAPI:
+    def __init__(self, port: str = '/dev/ttyACM0', baud: int = 115200):
+        self.imu = IMUCalibration(port, baud)
+        
+    def calibrate_time(self) -> float:
+        """Run time synchronization calibration"""
+        return self.imu.time_calibration()
+        
+    def calibrate_gravity(self) -> Tuple[float, float, float]:
+        """Run gravity vector calibration"""
+        return self.imu.gravity_calibration()
+        
+    def calibrate_gyro(self) -> None:
+        """Run gyroscope calibration"""
+        self.imu.gyro_calibration()
+        
+    def calibrate_mag(self) -> None:
+        """Run magnetometer calibration"""
+        self.imu.mag_calibration()
 
-@app.route('/calibrate/time')
-def calibrate_time():
-    offset = imu.time_calibration()
-    return jsonify({'offset_us': offset})
-
-@app.route('/calibrate/gravity')
-def calibrate_gravity():
-    gx, gy, gz = imu.gravity_calibration()
-    return jsonify({'gravity_vector': [gx, gy, gz]})
-
-@app.route('/calibrate/gyro')
-def calibrate_gyro():
-    imu.gyro_calibration()
-    return jsonify({'status': 'success'})
-
-@app.route('/calibrate/mag')
-def calibrate_mag():
-    imu.mag_calibration()
-    return jsonify({'status': 'success'})
-
+# Example usage:
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    imu_api = IMUAPI()
+    time_offset = imu_api.calibrate_time()
+    print(f"Time offset: {time_offset} microseconds")
