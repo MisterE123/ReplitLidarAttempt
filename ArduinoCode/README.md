@@ -12,17 +12,12 @@ The system requires several calibration steps:
    - Measures communication latency
    - Does not require the IMU to be stationary
 
-2. Gravity Calibration  
-   - Determines local gravity vector
+2. Still Calibration
+   - Combines gravity vector and gyro bias calibration
    - Place IMU flat and stationary
    - Takes ~1 second to complete
 
-3. Gyroscope Calibration
-   - Determines gyro bias/drift
-   - Keep IMU stationary
-   - Takes ~2 seconds
-
-4. Magnetometer Calibration
+3. Magnetometer Calibration
    - Compensates for hard/soft iron effects
    - Rotate IMU through all orientations
    - Takes 10 seconds
@@ -40,8 +35,7 @@ END_DATA_BLOCK
 
 ## Commands
 - time_calibrate: Start time sync
-- gravity_calibrate: Calibrate gravity
-- gyro_calibrate: Calibrate gyroscope
+- still_calibrate: Calibrate gravity and gyroscope
 - mag_calibrate: Calibrate magnetometer
 - start_collection: Begin data streaming
 - stop_collection: Stop data streaming
