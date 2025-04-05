@@ -191,6 +191,7 @@ class CalibrationGUI_Tk:
         """Shows the specified frame."""
         self.main_menu_frame.pack_forget(); self.calibration_frame.pack_forget()
         frame_to_show.pack(fill=tk.BOTH, expand=True)
+        print(f"DEBUG (_show_frame): Showing frame {frame_to_show}") # Log which frame is shown
 
     def _go_to_calibration_steps(self):
         """Navigates to the calibration frame."""
@@ -404,9 +405,13 @@ class CalibrationGUI_Tk:
              self.calibrate_button.config(state=tk.DISABLED)
              print("DEBUG (_collection_finished_update): Keeping Start Collection and Calibrate buttons DISABLED.")
 
-        # Ensure start button is visible again
-        if not self.start_collection_button.winfo_ismapped():
-             self.start_collection_button.pack(pady=15, ipadx=20, ipady=10)
+        # --- MODIFIED: Explicitly pack start button here ---
+        is_mapped = self.start_collection_button.winfo_ismapped()
+        print(f"DEBUG (_collection_finished_update): Start button is_mapped before pack: {is_mapped}")
+        # Always pack it here to ensure it's managed after stop button is forgotten
+        self.start_collection_button.pack(pady=15, ipadx=20, ipady=10)
+        print(f"DEBUG (_collection_finished_update): Explicitly packed start button.")
+        # --- END MODIFIED ---
 
 
     # --- Navigation and Closing ---
@@ -414,7 +419,7 @@ class CalibrationGUI_Tk:
         """Returns to the main menu frame."""
         self.current_state = STATE_MAIN_MENU
         self._show_calibration_button(None) # Hide calibration buttons
-        self._show_frame(self.main_menu_frame)
+        self._show_frame(self.main_menu_frame) # Show main frame
 
         # --- ADDED LOGGING before setting button state ---
         print(f"DEBUG (_go_to_main_menu): Checking conditions before setting button states.")
@@ -424,6 +429,7 @@ class CalibrationGUI_Tk:
 
         button_state_after_config = "unknown" # Initialize
 
+        # Set button states
         if self.imu_api:
              status_msg = "IMU API Ready."
              status_msg += " LiDAR Active." if self.imu_api.lidar and self.imu_api.lidar._is_connected else " LiDAR Inactive."
@@ -450,10 +456,20 @@ class CalibrationGUI_Tk:
              self.start_collection_button.config(state=tk.DISABLED)
              print("DEBUG (_go_to_main_menu): IMU API is None, keeping Start Collection and Calibrate buttons DISABLED.")
 
-        # Hide stop button and ensure start button is visible
+        # --- MODIFIED: Manage button visibility explicitly ---
+        # 1. Forget the stop button
         self.stop_collection_button.pack_forget()
-        if not self.start_collection_button.winfo_ismapped():
-             self.start_collection_button.pack(pady=15, ipadx=20, ipady=10)
+        print("DEBUG (_go_to_main_menu): Forgot stop button.")
+
+        # 2. Check if start button is already managed by pack
+        is_mapped = self.start_collection_button.winfo_ismapped()
+        print(f"DEBUG (_go_to_main_menu): Start button is_mapped before explicit pack: {is_mapped}")
+
+        # 3. Always pack the start button to ensure it's in the layout
+        #    Using the same pack options as in _setup_main_menu_frame
+        self.start_collection_button.pack(pady=15, ipadx=20, ipady=10)
+        print(f"DEBUG (_go_to_main_menu): Explicitly packed start button.")
+        # --- END MODIFIED ---
 
     def _on_closing(self):
         """Handles the window close event."""
@@ -490,3 +506,4 @@ if __name__ == "__main__":
          except: pass
     finally:
          print("DEBUG: Application finished.")
+
