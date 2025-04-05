@@ -81,11 +81,9 @@ void loop() {
     if (command == "time_calibrate") {
       currentState = TIME_CALIBRATING;
       handleTimeCalibration();
-    } else if (command == "gravity_calibrate") {
+    } else if (command == "still_calibrate") {
       currentState = GRAVITY_CALIBRATING;
-      calibrateGravity();
-    } else if (command == "gyro_calibrate") {
-      calibrateGyro();
+      calibrateStillSensors();
     } else if (command == "mag_calibrate") {
       calibrateMag();
     } else if (command == "start_collection") {
@@ -111,44 +109,44 @@ void handleTimeCalibration() {
   printReadyMessage();
 }
 
-void calibrateGravity() {
-  Serial.println("GRAVITY_CAL_START");
-
+void calibrateStillSensors() {
+  Serial.println("STILL_CAL_START");
   const int numSamples = 100;
-  float sumX = 0.0, sumY = 0.0, sumZ = 0.0;
+  float accelSumX = 0.0, accelSumY = 0.0, accelSumZ = 0.0;
+  float gyroSumX = 0.0, gyroSumY = 0.0, gyroSumZ = 0.0;
   int sampleCount = 0;
 
   unsigned long startTime = millis();
-  while (millis() - startTime < 1000 && sampleCount < numSamples) {
-    if (IMU.accelerationAvailable()) {
-      float x, y, z;
-      IMU.readAcceleration(x, y, z);
-      sumX += x;
-      sumY += y;
-      sumZ += z;
+  while (sampleCount < numSamples) {
+    if (IMU.accelerationAvailable() && IMU.gyroscopeAvailable()) {
+      float ax, ay, az, gx, gy, gz;
+      IMU.readAcceleration(ax, ay, az);
+      IMU.readGyroscope(gx, gy, gz);
+      
+      accelSumX += ax; accelSumY += ay; accelSumZ += az;
+      gyroSumX += gx; gyroSumY += gy; gyroSumZ += gz;
       sampleCount++;
       delay(10);
     }
   }
 
   if (sampleCount > 0) {
-    gravityX = sumX / sampleCount;
-    gravityY = sumY / sampleCount;
-    gravityZ = sumZ / sampleCount;
-    Serial.println("GRAVITY_CAL_COMPLETE");
+    gravityX = accelSumX / sampleCount;
+    gravityY = accelSumY / sampleCount;
+    gravityZ = accelSumZ / sampleCount;
+    
+    gyroBiasX = gyroSumX / sampleCount;
+    gyroBiasY = gyroSumY / sampleCount;
+    gyroBiasZ = gyroSumZ / sampleCount;
+    
+    Serial.println("STILL_CAL_COMPLETE");
   } else {
-    gravityX = 0.0;
-    gravityY = 0.0;
-    gravityZ = 1.0;
-    Serial.println("GRAVITY_CAL_FAILED");
+    Serial.println("STILL_CAL_FAILED");
   }
 
   currentState = READY;
   printReadyMessage();
 }
-
-void calibrateGyro() {
-  Serial.println("GYRO_CAL_START");
   const int numSamples = 100;
   float sumX = 0.0, sumY = 0.0, sumZ = 0.0;
   int sampleCount = 0;

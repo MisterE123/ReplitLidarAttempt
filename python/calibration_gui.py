@@ -14,8 +14,7 @@ class CalibrationGUI:
         self.status = "Ready"
         self.buttons = [
             {"text": "Time Calibration", "action": self.calibrate_time},
-            {"text": "Gravity Calibration", "action": self.calibrate_gravity},
-            {"text": "Gyro Calibration", "action": self.calibrate_gyro},
+            {"text": "Still Calibration (Gravity+Gyro)", "action": self.calibrate_still},
             {"text": "Mag Calibration", "action": self.calibrate_mag}
         ]
 
@@ -38,17 +37,10 @@ class CalibrationGUI:
         except Exception as e:
             self.status = f"Error: {str(e)}"
 
-    def calibrate_gravity(self):
+    def calibrate_still(self):
         try:
-            gx, gy, gz = self.imu.calibrate_gravity()
-            self.status = f"Gravity vector: [{gx:.2f}, {gy:.2f}, {gz:.2f}]"
-        except Exception as e:
-            self.status = f"Error: {str(e)}"
-
-    def calibrate_gyro(self):
-        try:
-            self.imu.calibrate_gyro()
-            self.status = "Gyro calibration complete"
+            self.imu.calibrate_still_sensors()
+            self.status = "Still calibration complete"
         except Exception as e:
             self.status = f"Error: {str(e)}"
 

@@ -17,26 +17,19 @@ class IMUAPI:
             return float(response.split(',')[1])
         raise RuntimeError("Time calibration failed")
         
-    def calibrate_gravity(self) -> Tuple[float, float, float]:
-        """Calibrate gravity vector with IMU held still"""
-        self.ser.write(b'gravity_calibrate\n')
+    def calibrate_still_sensors(self) -> None:
+        """Calibrate gravity and gyro with IMU held still"""
+        self.ser.write(b'still_calibrate\n')
         response = self.ser.readline().decode().strip()
-        if response != 'GRAVITY_CAL_START':
-            raise RuntimeError("Gravity calibration failed to start")
+        if response != 'STILL_CAL_START':
+            raise RuntimeError("Still calibration failed to start")
             
         while True:
             response = self.ser.readline().decode().strip()
-            if response == 'GRAVITY_CAL_COMPLETE':
-                return (0.0, 0.0, 1.0)  # Default gravity vector
-            elif response == 'GRAVITY_CAL_FAILED':
-                raise RuntimeError("Gravity calibration failed")
-        
-    def calibrate_gyro(self) -> None:
-        """Calibrate gyroscope bias with IMU held still"""
-        self.ser.write(b'gyro_calibrate\n')
-        response = self.ser.readline().decode().strip()
-        if response != 'GYRO_CAL_START':
-            raise RuntimeError("Gyro calibration failed to start")
+            if response == 'STILL_CAL_COMPLETE':
+                return
+            elif response == 'STILL_CAL_FAILED':
+                raise RuntimeError("Still calibration failed")
             
         while True:
             response = self.ser.readline().decode().strip()
