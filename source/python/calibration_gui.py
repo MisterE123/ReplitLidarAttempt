@@ -37,14 +37,18 @@ class CalibrationGUI_Tk:
         self.root = root
         self.root.title("IMU & LiDAR Calibration Tool (Tkinter)")
         # Make window slightly larger to accommodate more status info
-        self.root.geometry("750x500")
+        self.root.geometry("750x550") # Increased height slightly for new button
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing) # Handle window close
 
         self.imu_api: Optional[IMUAPI] = None # Use updated IMUAPI
         self.api_init_error = None
-        self.is_calibrated = False # Basic flag for sensor calibration steps
-        self.clocks_calibrated = False # Flag for clock sync status
         self.current_state = STATE_MAIN_MENU # To control button states
+
+        # --- Calibration Status Flags ---
+        self.clocks_calibrated = False
+        self.still_calibrated = False
+        self.motion_calibrated = False
+        # self.is_calibrated is redundant now, remove its usage
 
         # --- Style ---
         self.style = ttk.Style()
@@ -56,6 +60,7 @@ class CalibrationGUI_Tk:
         self.style.configure('Status.TLabel', foreground='grey') # Style for detailed status
         self.style.configure('Error.TLabel', foreground='red')
         self.style.configure('Success.TLabel', foreground='green')
+        self.style.configure('Finish.TButton', foreground='blue', font=('Helvetica', 10, 'bold')) # Style for finish button
 
         # --- Main Frames ---
         self.main_menu_frame = ttk.Frame(root, padding="10")
@@ -64,7 +69,7 @@ class CalibrationGUI_Tk:
         # --- Status Display Area ---
         # Use a Text widget for more detailed status updates
         self.status_frame = ttk.LabelFrame(root, text="Status Log", padding="5")
-        self.status_text = tk.Text(self.status_frame, height=8, width=80, wrap=tk.WORD, state=tk.DISABLED, relief=tk.SUNKEN, borderwidth=1)
+        self.status_text = tk.Text(self.status_frame, height=10, width=80, wrap=tk.WORD, state=tk.DISABLED, relief=tk.SUNKEN, borderwidth=1) # Increased height
         self.status_scrollbar = ttk.Scrollbar(self.status_frame, orient=tk.VERTICAL, command=self.status_text.yview)
         self.status_text.config(yscrollcommand=self.status_scrollbar.set)
         self.status_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -183,7 +188,7 @@ class CalibrationGUI_Tk:
         for widget in self.calibration_frame.winfo_children(): widget.destroy()
 
         label = ttk.Label(self.calibration_frame, text="Calibration Steps", font=("Helvetica", 16))
-        label.pack(pady=20)
+        label.pack(pady=10) # Reduced padding
 
         # Step 1: Clock Sync (Now combined)
         self.clock_sync_button = ttk.Button(
@@ -192,7 +197,7 @@ class CalibrationGUI_Tk:
             command=self._do_clock_calibration_tk,
             state=tk.DISABLED # Disabled until main calibrate button clicked
         )
-        self.clock_sync_button.pack(pady=10, fill=tk.X, padx=50)
+        self.clock_sync_button.pack(pady=5, fill=tk.X, padx=50) # Reduced padding
 
         # Step 2: Still Calibration
         self.still_cal_button = ttk.Button(
@@ -201,7 +206,7 @@ class CalibrationGUI_Tk:
             command=self._do_still_calibration_tk,
             state=tk.DISABLED # Disabled until clocks sync'd
         )
-        self.still_cal_button.pack(pady=10, fill=tk.X, padx=50)
+        self.still_cal_button.pack(pady=5, fill=tk.X, padx=50) # Reduced padding
 
         # Step 3: Motion Calibration
         self.motion_cal_button = ttk.Button(
@@ -210,23 +215,60 @@ class CalibrationGUI_Tk:
             command=self._do_motion_calibration_tk,
             state=tk.DISABLED # Disabled until clocks sync'd
         )
-        self.motion_cal_button.pack(pady=10, fill=tk.X, padx=50)
+        self.motion_cal_button.pack(pady=5, fill=tk.X, padx=50) # Reduced padding
 
-        # Done Button
+        # --- Separator ---
+        ttk.Separator(self.calibration_frame, orient='horizontal').pack(fill='x', padx=40, pady=15)
+
+        # Original Done Button (for exiting early)
         self.done_button = ttk.Button(
             self.calibration_frame,
-            text="Done (Back to Main Menu)",
-            command=self._go_to_main_menu
+            text="Done (Back to Main Menu - Incomplete)",
+            command=self._go_to_main_menu,
+            state=tk.DISABLED # Tied to clock button state initially
         )
-        self.done_button.pack(pady=30, fill=tk.X, padx=50)
+        self.done_button.pack(pady=5, fill=tk.X, padx=50)
+
+        # New Finish Button (only enabled when all steps complete)
+        self.finish_calibration_button = ttk.Button(
+            self.calibration_frame,
+            text="FINISH CALIBRATION & Return",
+            command=self._go_to_main_menu, # Also returns to main menu
+            state=tk.DISABLED, # Initially disabled
+            style='Finish.TButton' # Apply special style
+        )
+        self.finish_calibration_button.pack(pady=10, fill=tk.X, padx=50)
+
 
     def _set_calibration_buttons_state(self, clock_state=tk.DISABLED, sensor_state=tk.DISABLED):
         """Enable/disable calibration step buttons."""
         if hasattr(self, 'clock_sync_button'): self.clock_sync_button.config(state=clock_state)
         if hasattr(self, 'still_cal_button'): self.still_cal_button.config(state=sensor_state)
         if hasattr(self, 'motion_cal_button'): self.motion_cal_button.config(state=sensor_state)
-        # Enable Done button along with Clock button state
+        # Original Done button follows clock state
         if hasattr(self, 'done_button'): self.done_button.config(state=clock_state)
+        # Ensure Finish button is disabled unless specifically enabled later
+        if hasattr(self, 'finish_calibration_button'):
+             # Only enable finish button if explicitly told AND all steps are done
+             # This function is mostly for disabling/initial enabling,
+             # _update_finish_button_state handles the final enabling.
+             if clock_state == tk.DISABLED or sensor_state == tk.DISABLED:
+                  self.finish_calibration_button.config(state=tk.DISABLED)
+             # If clock/sensor states are NORMAL, _update_finish_button_state will handle it
+
+
+    def _update_finish_button_state(self):
+        """Checks if all calibrations are done and enables the finish button."""
+        all_done = self.clocks_calibrated and self.still_calibrated and self.motion_calibrated
+        if hasattr(self, 'finish_calibration_button'):
+            new_state = tk.NORMAL if all_done else tk.DISABLED
+            self.finish_calibration_button.config(state=new_state)
+            if all_done:
+                 self.log_status("All calibration steps complete! Ready to finish.", tag='success')
+                 # Optional: Disable the step buttons once all are done?
+                 # self._set_calibration_buttons_state(clock_state=tk.DISABLED, sensor_state=tk.DISABLED)
+                 # self.done_button.config(state=tk.DISABLED) # Disable early exit?
+
 
     def _show_frame(self, frame_to_show):
         """Hides other frames and shows the specified frame."""
@@ -243,8 +285,13 @@ class CalibrationGUI_Tk:
 
         self.log_status("Navigating to calibration steps.", tag='info')
         self.current_state = STATE_CALIBRATING
+        # Reset flags when entering calibration screen
+        self.clocks_calibrated = False
+        self.still_calibrated = False
+        self.motion_calibrated = False
         # Enable the clock sync button, disable others initially
         self._set_calibration_buttons_state(clock_state=tk.NORMAL, sensor_state=tk.DISABLED)
+        self._update_finish_button_state() # Ensure finish button is disabled
         self._show_frame(self.calibration_frame)
         self.log_status("Ready for Clock Calibration.", tag='info')
 
@@ -258,6 +305,7 @@ class CalibrationGUI_Tk:
 
         self.log_status("Attempting clock synchronization (IMU + LiDAR)...", tag='info')
         self._set_calibration_buttons_state(clock_state=tk.DISABLED, sensor_state=tk.DISABLED) # Disable all during attempt
+        self._update_finish_button_state() # Ensure finish button is disabled
 
         # Run clock calibration in a separate thread
         cal_thread = threading.Thread(target=self._perform_clock_calibration, daemon=True)
@@ -297,16 +345,18 @@ class CalibrationGUI_Tk:
         log_tag = 'info'
         if status == 'Failed':
              log_tag = 'error'
+             self.clocks_calibrated = False # Ensure flag is false on failure
         elif status == 'Success':
              log_tag = 'success'
+             self.clocks_calibrated = True # Set flag on success
         elif status.startswith('Partial'):
              log_tag = 'warning'
+             self.clocks_calibrated = True # Set flag even on partial success (IMU part worked)
 
         self.log_status(f"Clock Sync Status: {status}", tag=log_tag)
         self.log_status(f"Details: {message}", tag='info') # Keep details as info
 
         if status != 'Failed':
-            self.clocks_calibrated = True
             # Display detailed results
             imu_pi_ns = result.get('pi_sys_time_for_imu_cal_ns')
             imu_sens_us = result.get('imu_sensor_timestamp_at_cal_us')
@@ -324,12 +374,13 @@ class CalibrationGUI_Tk:
             if status != 'Partial (No LiDAR API)': # Only show LiDAR details if it was attempted
                  self.log_status(f"  LiDAR Pi Time (ns):   {lid_pi_str}", tag='info')
                  self.log_status(f"  LiDAR Sensor Time (s):   {lid_sens_str}", tag='info')
-                 if lid_pi_ns is None:
+                 if lid_pi_ns is None and status != 'Partial (No LiDAR Sync)': # Check if sync failed specifically
                       self.log_status("  (LiDAR sync data not captured in window)", tag='warning')
 
             # Enable sensor calibration buttons
             self.log_status("Clock calibration finished. Ready for sensor calibration.", tag='success')
             self._set_calibration_buttons_state(clock_state=tk.NORMAL, sensor_state=tk.NORMAL)
+            self._update_finish_button_state() # Check if all steps are now complete
 
         else:
             self.clocks_calibrated = False
@@ -337,9 +388,10 @@ class CalibrationGUI_Tk:
             messagebox.showerror("Clock Calibration Failed", message)
             # Re-enable clock sync button to allow retry, keep others disabled
             self._set_calibration_buttons_state(clock_state=tk.NORMAL, sensor_state=tk.DISABLED)
+            self._update_finish_button_state() # Ensure finish button is disabled
 
 
-    # --- Sensor Calibration Methods (Mostly similar, check for clock calibration first) ---
+    # --- Sensor Calibration Methods (Mostly similar, check clock calibration first) ---
 
     def _do_still_calibration_tk(self):
         """Handles the 'Still Calibration' button click."""
@@ -356,6 +408,7 @@ class CalibrationGUI_Tk:
             self.log_status("Preparing for Still Calibration.", tag='info')
             self.log_status(instruction, tag='info')
             self._set_calibration_buttons_state(clock_state=tk.DISABLED, sensor_state=tk.DISABLED) # Disable all during cal
+            self._update_finish_button_state() # Ensure finish button is disabled
 
             # Schedule the actual calibration after the delay
             self.root.after(delay_ms, self._schedule_still_calibration_thread)
@@ -364,10 +417,12 @@ class CalibrationGUI_Tk:
             self.log_status("Error: Could not find delay settings.", tag='error')
             messagebox.showerror("Error", "Could not find delay settings in IMU API/config.")
             self._set_calibration_buttons_state(clock_state=tk.NORMAL, sensor_state=tk.NORMAL) # Re-enable on error
+            self._update_finish_button_state() # Update finish button state based on flags
         except Exception as e:
             self.log_status(f"Unexpected Error preparing still calibration: {str(e)}", tag='error')
             messagebox.showerror("Error", f"Unexpected error: {str(e)}")
             self._set_calibration_buttons_state(clock_state=tk.NORMAL, sensor_state=tk.NORMAL)
+            self._update_finish_button_state()
 
     def _schedule_still_calibration_thread(self):
         """Schedules the still calibration to run in a background thread."""
@@ -376,6 +431,7 @@ class CalibrationGUI_Tk:
 
     def _perform_actual_still_calibration(self):
         """Called by thread to perform the still calibration steps."""
+        success = False
         try:
             # Ensure imu_api exists
             if not self.imu_api: raise Exception("IMU API not available in thread.")
@@ -390,7 +446,7 @@ class CalibrationGUI_Tk:
             self.root.after(0, lambda: self.log_status("Starting Gyro calibration (keep still)...", tag='info'))
             self.imu_api.calibrate_gyro()
             self.root.after(0, lambda: self.log_status("Still Calibration Complete (Gravity & Gyro).", tag='success'))
-            self.is_calibrated = True # Example flag
+            success = True
 
         except (IMUCommunicationError, IMUCalibrationError, IMUTimeoutError) as e:
             self.root.after(0, self._sensor_calibration_failure, "Still", e)
@@ -399,8 +455,17 @@ class CalibrationGUI_Tk:
             import traceback
             traceback.print_exc()
         finally:
+            # Update status flag on main thread
+            if success:
+                 self.root.after(0, self._mark_still_cal_done)
             # Re-enable buttons after attempt
-             self.root.after(0, lambda: self._set_calibration_buttons_state(clock_state=tk.NORMAL, sensor_state=tk.NORMAL))
+            self.root.after(0, lambda: self._set_calibration_buttons_state(clock_state=tk.NORMAL, sensor_state=tk.NORMAL))
+            # Check if all calibrations are now complete
+            self.root.after(0, self._update_finish_button_state)
+
+    def _mark_still_cal_done(self):
+         """Sets the still calibration flag (runs in main thread)."""
+         self.still_calibrated = True
 
     def _do_motion_calibration_tk(self):
         """Handles the 'Motion Calibration' button click."""
@@ -417,6 +482,7 @@ class CalibrationGUI_Tk:
             self.log_status("Preparing for Motion Calibration.", tag='info')
             self.log_status(prep_instruction, tag='info')
             self._set_calibration_buttons_state(clock_state=tk.DISABLED, sensor_state=tk.DISABLED) # Disable all during cal
+            self._update_finish_button_state() # Ensure finish button is disabled
 
             self.root.after(delay_ms, self._schedule_motion_calibration_thread)
 
@@ -424,10 +490,12 @@ class CalibrationGUI_Tk:
             self.log_status("Error: Could not find delay settings.", tag='error')
             messagebox.showerror("Error", "Could not find delay settings in IMU API/config.")
             self._set_calibration_buttons_state(clock_state=tk.NORMAL, sensor_state=tk.NORMAL) # Re-enable on error
+            self._update_finish_button_state()
         except Exception as e:
             self.log_status(f"Unexpected Error preparing motion calibration: {str(e)}", tag='error')
             messagebox.showerror("Error", f"Unexpected error: {str(e)}")
             self._set_calibration_buttons_state(clock_state=tk.NORMAL, sensor_state=tk.NORMAL)
+            self._update_finish_button_state()
 
     def _schedule_motion_calibration_thread(self):
         """Schedules the motion calibration to run in a background thread."""
@@ -436,6 +504,7 @@ class CalibrationGUI_Tk:
 
     def _perform_actual_motion_calibration(self):
         """Called by thread to perform the motion calibration step."""
+        success = False
         try:
             # Ensure imu_api exists
             if not self.imu_api: raise Exception("IMU API not available in thread.")
@@ -444,7 +513,7 @@ class CalibrationGUI_Tk:
             self.root.after(0, lambda: self.log_status("Rotate IMU slowly in all directions for ~10s.", tag='info'))
             self.imu_api.calibrate_mag()
             self.root.after(0, lambda: self.log_status("Motion Calibration Complete (Magnetometer).", tag='success'))
-            self.is_calibrated = True # Example flag
+            success = True
 
         except (IMUCommunicationError, IMUCalibrationError, IMUTimeoutError) as e:
             self.root.after(0, self._sensor_calibration_failure, "Motion", e)
@@ -453,21 +522,38 @@ class CalibrationGUI_Tk:
             import traceback
             traceback.print_exc()
         finally:
-            # Re-enable buttons after attempt
-            self.root.after(0, lambda: self._set_calibration_buttons_state(clock_state=tk.NORMAL, sensor_state=tk.NORMAL))
+             # Update status flag on main thread
+             if success:
+                  self.root.after(0, self._mark_motion_cal_done)
+             # Re-enable buttons after attempt
+             self.root.after(0, lambda: self._set_calibration_buttons_state(clock_state=tk.NORMAL, sensor_state=tk.NORMAL))
+             # Check if all calibrations are now complete
+             self.root.after(0, self._update_finish_button_state)
+
+    def _mark_motion_cal_done(self):
+         """Sets the motion calibration flag (runs in main thread)."""
+         self.motion_calibrated = True
 
     def _sensor_calibration_failure(self, cal_type: str, error: Exception):
         """GUI update after failed sensor calibration (runs in main thread)."""
         error_str = str(error)
+        # Reset corresponding flag on failure
+        if cal_type == "Still":
+             self.still_calibrated = False
+        elif cal_type == "Motion":
+             self.motion_calibrated = False
+
         self.log_status(f"{cal_type} Calibration Error: {error_str}", tag='error')
         self.log_status("Please try again.", tag='info')
         messagebox.showerror(f"{cal_type} Calibration Error", f"{error_str}\nPlease try again.")
+        # Update finish button state (it should become disabled if it was enabled)
+        self._update_finish_button_state()
 
 
     # --- Navigation and Closing ---
 
     def _go_to_main_menu(self):
-        """Callback for the 'Done' button in calibration frame."""
+        """Callback for the 'Done' or 'Finish' buttons."""
         self.current_state = STATE_MAIN_MENU
         self._show_frame(self.main_menu_frame)
         # Re-enable main calibrate button if APIs are still connected
@@ -483,8 +569,13 @@ class CalibrationGUI_Tk:
         elif hasattr(self, 'calibrate_button'):
              self.calibrate_button.config(state=tk.DISABLED)
              self.log_status(f"Returned to Main Menu. APIs disconnected or failed.", tag='warning')
-        self.clocks_calibrated = False # Reset clock status when returning
-        self.is_calibrated = False # Reset sensor status
+
+        # Reset all calibration flags when returning to main menu
+        self.clocks_calibrated = False
+        self.still_calibrated = False
+        self.motion_calibrated = False
+        # Ensure finish button is disabled (handled by _go_to_calibration_steps next time)
+
 
     def _on_closing(self):
         """Handles the window close event."""
@@ -502,20 +593,6 @@ class CalibrationGUI_Tk:
 # --- Main Execution ---
 if __name__ == "__main__":
     print("DEBUG: Creating Tkinter root window...")
-    # Enforce use of X11 backend if possible on Linux, helps prevent some Tk issues
-    # if sys.platform.startswith('linux'):
-    #     try:
-    #         # Check if DISPLAY is set
-    #         if 'DISPLAY' not in os.environ:
-    #              print("WARNING: DISPLAY environment variable not set. Tkinter might fail.")
-    #         # Try forcing X11 - this might require python3-tk package
-    #         # root = tk.Tk(className="CalibrationTool", useTk=1) # Might not work everywhere
-    #         root = tk.Tk()
-    #     except tk.TclError as e:
-    #          print(f"Tkinter TclError: {e}. Ensure GUI environment is available.")
-    #          sys.exit(1)
-    # else:
-    #      root = tk.Tk()
     root = tk.Tk() # Keep it simple for now
 
     print("DEBUG: Creating CalibrationGUI_Tk instance...")
