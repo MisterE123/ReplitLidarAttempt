@@ -5,6 +5,7 @@ import time
 import sys
 import threading # To run IMU init in background
 import json # To potentially format sync results display
+from typing import Dict, Any, Optional # <--- Added import for type hinting
 
 # Import the updated API and specific exceptions
 # Make sure imu_api_v3.py (renamed from imu_api.py) and lidar_api.py are accessible
@@ -89,19 +90,17 @@ class CalibrationGUI_Tk:
         print(f"GUI Log ({tag}): {message}") # Also print to console
         if hasattr(self, 'status_text'):
             self.status_text.config(state=tk.NORMAL)
+            # Define tags if they don't exist yet (safer)
+            if tag not in self.status_text.tag_names():
+                 if tag == 'error': self.status_text.tag_config('error', foreground='red')
+                 elif tag == 'success': self.status_text.tag_config('success', foreground='green')
+                 elif tag == 'warning': self.status_text.tag_config('warning', foreground='orange')
+                 else: self.status_text.tag_config('info', foreground='black')
+
             self.status_text.insert(tk.END, f"[{tag.upper()}] {message}\n", tag)
             self.status_text.config(state=tk.DISABLED)
             self.status_text.see(tk.END) # Scroll to the bottom
 
-            # Apply tags for styling (configure these in __init__)
-            if tag == 'error':
-                self.status_text.tag_config('error', foreground='red')
-            elif tag == 'success':
-                 self.status_text.tag_config('success', foreground='green')
-            elif tag == 'warning':
-                 self.status_text.tag_config('warning', foreground='orange')
-            else: # Default info style
-                 self.status_text.tag_config('info', foreground='black')
         # self.root.update_idletasks() # Force update if needed
 
     def _initialize_apis(self):
@@ -226,7 +225,8 @@ class CalibrationGUI_Tk:
         if hasattr(self, 'clock_sync_button'): self.clock_sync_button.config(state=clock_state)
         if hasattr(self, 'still_cal_button'): self.still_cal_button.config(state=sensor_state)
         if hasattr(self, 'motion_cal_button'): self.motion_cal_button.config(state=sensor_state)
-        if hasattr(self, 'done_button'): self.done_button.config(state=clock_state) # Enable Done when Clock button is enabled
+        # Enable Done button along with Clock button state
+        if hasattr(self, 'done_button'): self.done_button.config(state=clock_state)
 
     def _show_frame(self, frame_to_show):
         """Hides other frames and shows the specified frame."""
@@ -266,9 +266,15 @@ class CalibrationGUI_Tk:
     def _perform_clock_calibration(self):
         """Performs clock calibration (called from _do_clock_calibration_tk thread)."""
         try:
-            sync_result = self.imu_api.calibrate_clocks()
-            # Schedule GUI updates back on the main thread
-            self.root.after(0, self._clock_calibration_finished, sync_result)
+            # Ensure imu_api exists before calling method
+            if self.imu_api:
+                sync_result = self.imu_api.calibrate_clocks()
+                # Schedule GUI updates back on the main thread
+                self.root.after(0, self._clock_calibration_finished, sync_result)
+            else:
+                 # Should not happen if button is enabled, but handle defensively
+                 result = {'status': 'Failed', 'message': "IMU API instance not available."}
+                 self.root.after(0, self._clock_calibration_finished, result)
 
         except (IMUCommunicationError, IMUTimeoutError, LidarCommunicationError) as e:
              # Catch errors raised directly by the API call itself
@@ -281,13 +287,23 @@ class CalibrationGUI_Tk:
             import traceback
             traceback.print_exc()
 
+    # Note: Added type hint import 'from typing import Dict, Any, Optional' at the top
     def _clock_calibration_finished(self, result: Dict[str, Any]):
         """GUI update after clock calibration attempt (runs in main thread)."""
         status = result.get('status', 'Failed')
         message = result.get('message', 'Unknown error.')
 
-        self.log_status(f"Clock Sync Status: {status}", tag='success' if status != 'Failed' else 'error')
-        self.log_status(f"Details: {message}", tag='info')
+        # Determine tag based on status for logging
+        log_tag = 'info'
+        if status == 'Failed':
+             log_tag = 'error'
+        elif status == 'Success':
+             log_tag = 'success'
+        elif status.startswith('Partial'):
+             log_tag = 'warning'
+
+        self.log_status(f"Clock Sync Status: {status}", tag=log_tag)
+        self.log_status(f"Details: {message}", tag='info') # Keep details as info
 
         if status != 'Failed':
             self.clocks_calibrated = True
@@ -297,16 +313,22 @@ class CalibrationGUI_Tk:
             lid_pi_ns = result.get('pi_sys_time_anchor_lidar_ns')
             lid_sens_s = result.get('lidar_sensor_timestamp_anchor_s')
 
-            self.log_status(f"  IMU Pi Time (ns):   {imu_pi_ns}", tag='info')
-            self.log_status(f"  IMU Sensor Time (us): {imu_sens_us}", tag='info')
-            if lid_pi_ns is not None:
-                self.log_status(f"  LiDAR Pi Time (ns):   {lid_pi_ns}", tag='info')
-                self.log_status(f"  LiDAR Sensor Time (s):   {lid_sens_s:.3f}", tag='info')
-            else:
-                 self.log_status("  (LiDAR sync data not available)", tag='warning')
+            # Format timestamps for readability if they exist
+            imu_pi_str = f"{imu_pi_ns:,}" if imu_pi_ns is not None else "N/A"
+            imu_sens_str = f"{imu_sens_us:,}" if imu_sens_us is not None else "N/A"
+            lid_pi_str = f"{lid_pi_ns:,}" if lid_pi_ns is not None else "N/A"
+            lid_sens_str = f"{lid_sens_s:.3f}" if lid_sens_s is not None else "N/A"
+
+            self.log_status(f"  IMU Pi Time (ns):   {imu_pi_str}", tag='info')
+            self.log_status(f"  IMU Sensor Time (us): {imu_sens_str}", tag='info')
+            if status != 'Partial (No LiDAR API)': # Only show LiDAR details if it was attempted
+                 self.log_status(f"  LiDAR Pi Time (ns):   {lid_pi_str}", tag='info')
+                 self.log_status(f"  LiDAR Sensor Time (s):   {lid_sens_str}", tag='info')
+                 if lid_pi_ns is None:
+                      self.log_status("  (LiDAR sync data not captured in window)", tag='warning')
 
             # Enable sensor calibration buttons
-            self.log_status("Clock calibration successful. Ready for sensor calibration.", tag='success')
+            self.log_status("Clock calibration finished. Ready for sensor calibration.", tag='success')
             self._set_calibration_buttons_state(clock_state=tk.NORMAL, sensor_state=tk.NORMAL)
 
         else:
@@ -355,6 +377,9 @@ class CalibrationGUI_Tk:
     def _perform_actual_still_calibration(self):
         """Called by thread to perform the still calibration steps."""
         try:
+            # Ensure imu_api exists
+            if not self.imu_api: raise Exception("IMU API not available in thread.")
+
             # Gravity Calibration
             self.root.after(0, lambda: self.log_status("Calibrating Gravity...", tag='info'))
             self.root.after(0, lambda: self.log_status("Keep device perfectly still.", tag='info'))
@@ -371,6 +396,8 @@ class CalibrationGUI_Tk:
             self.root.after(0, self._sensor_calibration_failure, "Still", e)
         except Exception as e:
             self.root.after(0, self._sensor_calibration_failure, "Still", e)
+            import traceback
+            traceback.print_exc()
         finally:
             # Re-enable buttons after attempt
              self.root.after(0, lambda: self._set_calibration_buttons_state(clock_state=tk.NORMAL, sensor_state=tk.NORMAL))
@@ -410,6 +437,9 @@ class CalibrationGUI_Tk:
     def _perform_actual_motion_calibration(self):
         """Called by thread to perform the motion calibration step."""
         try:
+            # Ensure imu_api exists
+            if not self.imu_api: raise Exception("IMU API not available in thread.")
+
             self.root.after(0, lambda: self.log_status("Calibrating Magnetometer...", tag='info'))
             self.root.after(0, lambda: self.log_status("Rotate IMU slowly in all directions for ~10s.", tag='info'))
             self.imu_api.calibrate_mag()
@@ -420,6 +450,8 @@ class CalibrationGUI_Tk:
             self.root.after(0, self._sensor_calibration_failure, "Motion", e)
         except Exception as e:
             self.root.after(0, self._sensor_calibration_failure, "Motion", e)
+            import traceback
+            traceback.print_exc()
         finally:
             # Re-enable buttons after attempt
             self.root.after(0, lambda: self._set_calibration_buttons_state(clock_state=tk.NORMAL, sensor_state=tk.NORMAL))
@@ -442,8 +474,11 @@ class CalibrationGUI_Tk:
         if self.imu_api and hasattr(self, 'calibrate_button'):
              self.calibrate_button.config(state=tk.NORMAL)
              status_msg = "IMU API Ready."
-             if self.imu_api.lidar: status_msg += " LiDAR Active."
-             else: status_msg += " LiDAR Inactive."
+             # Check lidar status via imu_api instance
+             if self.imu_api.lidar and self.imu_api.lidar._is_connected:
+                 status_msg += " LiDAR Active."
+             else:
+                 status_msg += " LiDAR Inactive."
              self.log_status(f"Returned to Main Menu. {status_msg}", tag='info')
         elif hasattr(self, 'calibrate_button'):
              self.calibrate_button.config(state=tk.DISABLED)
@@ -467,7 +502,22 @@ class CalibrationGUI_Tk:
 # --- Main Execution ---
 if __name__ == "__main__":
     print("DEBUG: Creating Tkinter root window...")
-    root = tk.Tk()
+    # Enforce use of X11 backend if possible on Linux, helps prevent some Tk issues
+    # if sys.platform.startswith('linux'):
+    #     try:
+    #         # Check if DISPLAY is set
+    #         if 'DISPLAY' not in os.environ:
+    #              print("WARNING: DISPLAY environment variable not set. Tkinter might fail.")
+    #         # Try forcing X11 - this might require python3-tk package
+    #         # root = tk.Tk(className="CalibrationTool", useTk=1) # Might not work everywhere
+    #         root = tk.Tk()
+    #     except tk.TclError as e:
+    #          print(f"Tkinter TclError: {e}. Ensure GUI environment is available.")
+    #          sys.exit(1)
+    # else:
+    #      root = tk.Tk()
+    root = tk.Tk() # Keep it simple for now
+
     print("DEBUG: Creating CalibrationGUI_Tk instance...")
     try:
         app = CalibrationGUI_Tk(root)
@@ -482,6 +532,7 @@ if __name__ == "__main__":
               if root: root.destroy()
          except:
               pass
+         import traceback
+         traceback.print_exc()
     finally:
          print("DEBUG: Application finished.")
-
