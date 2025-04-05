@@ -6,6 +6,7 @@ import os
 import sys
 import traceback
 import sqlite3
+from typing import Optional
 
 # --- Import Custom Modules ---
 try:
