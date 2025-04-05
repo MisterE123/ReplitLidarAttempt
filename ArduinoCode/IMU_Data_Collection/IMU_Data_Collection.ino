@@ -1,3 +1,4 @@
+
 #include <MKRIMU.h>
 
 // States
@@ -146,10 +147,6 @@ void calibrateGravity() {
   printReadyMessage();
 }
 
-void collectAndSendData() {
-  float x, y, z;
-  unsigned long timestamp = micros();
-
 void calibrateGyro() {
   Serial.println("GYRO_CAL_START");
   const int numSamples = 100;
@@ -207,13 +204,16 @@ void calibrateMag() {
   printReadyMessage();
 }
 
+void collectAndSendData() {
+  float x, y, z;
+  unsigned long timestamp = micros();
 
   if (IMU.magneticFieldAvailable() && magCount < MAG_BUFFER_SIZE) {
     IMU.readMagneticField(x, y, z);
     magBuffer[magCount].timestamp = timestamp;
-    magBuffer[magCount].x = x;
-    magBuffer[magCount].y = y;
-    magBuffer[magCount].z = z;
+    magBuffer[magCount].x = x - magOffsetX;
+    magBuffer[magCount].y = y - magOffsetY;
+    magBuffer[magCount].z = z - magOffsetZ;
     magCount++;
   }
 
@@ -238,9 +238,9 @@ void calibrateMag() {
   if (IMU.gyroscopeAvailable() && gyroCount < GYRO_BUFFER_SIZE) {
     IMU.readGyroscope(x, y, z);
     gyroBuffer[gyroCount].timestamp = timestamp;
-    gyroBuffer[gyroCount].x = x;
-    gyroBuffer[gyroCount].y = y;
-    gyroBuffer[gyroCount].z = z;
+    gyroBuffer[gyroCount].x = x - gyroBiasX;
+    gyroBuffer[gyroCount].y = y - gyroBiasY;
+    gyroBuffer[gyroCount].z = z - gyroBiasZ;
     gyroCount++;
   }
 
