@@ -1,295 +1,357 @@
-import pygame
-import sys
+import tkinter as tk
+from tkinter import ttk # Themed widgets
+from tkinter import messagebox
 import time
-# Import the API and specific exceptions
-from imu_api import IMUAPI, IMUCommunicationError, IMUCalibrationError, IMUTimeoutError
+import sys
+import threading # To run IMU init in background
 
-# Define states
+# Import the API and specific exceptions from the existing file
+# Make sure imu_api.py is in the same directory or Python path
+try:
+    from imu_api import IMUAPI, IMUCommunicationError, IMUCalibrationError, IMUTimeoutError
+except ImportError:
+    messagebox.showerror("Error", "Could not find imu_api.py. Make sure it's in the same directory.")
+    sys.exit(1)
+
+# Define states (though managed differently in Tkinter)
 STATE_MAIN_MENU = 0
 STATE_CALIBRATING = 1
 
-class CalibrationGUI:
-    def __init__(self):
-        print("DEBUG: Initializing Pygame...") # ADDED
-        pygame.init()
-        self.screen_width = 800
-        self.screen_height = 600
-        self.screen = pygame.display.set_mode((self.screen_width, self.screen_height))
-        pygame.display.set_caption("IMU Calibration Tool")
-        self.clock = pygame.time.Clock()
-        self.font = pygame.font.Font(None, 36)
-        self.font_small = pygame.font.Font(None, 28) # For instructions
+class CalibrationGUI_Tk:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("IMU Calibration Tool (Tkinter)")
+        # Make window slightly larger
+        self.root.geometry("700x450")
+        self.root.protocol("WM_DELETE_WINDOW", self._on_closing) # Handle window close
 
-        self.status = "Connecting to IMU..."
-        self.instructions = "" # Separate line for instructions
-        self.is_calibrated = False # Flag to indicate calibration status (basic implementation)
-        self.current_state = STATE_MAIN_MENU
+        self.imu = None
+        self.imu_init_error = None
+        self.is_calibrated = False # Basic flag
+        self.current_state = STATE_MAIN_MENU # To control button states
 
-        print("DEBUG: Attempting to initialize IMUAPI...") # ADDED
+        # --- Style ---
+        self.style = ttk.Style()
+        # Try to use a theme that looks better across platforms
+        available_themes = self.style.theme_names()
+        print(f"Available themes: {available_themes}") # Debug print
+        if 'clam' in available_themes:
+             self.style.theme_use('clam')
+        elif 'alt' in available_themes:
+             self.style.theme_use('alt')
+        # Configure button style for padding
+        self.style.configure('TButton', padding=6)
+
+        # --- Main Frames ---
+        # Use frames to switch between "pages" or states
+        self.main_menu_frame = ttk.Frame(root, padding="10")
+        self.calibration_frame = ttk.Frame(root, padding="10")
+
+        # --- Status Display ---
+        # Place status at the bottom, spanning across columns if using grid
+        self.status_var = tk.StringVar()
+        self.status_label = ttk.Label(root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W, padding="5")
+        self.status_label.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
+        self.set_status("Initializing...", "") # Initial status
+
+        # --- Instructions Display ---
+        self.instructions_var = tk.StringVar()
+        self.instructions_label = ttk.Label(root, textvariable=self.instructions_var, relief=tk.SUNKEN, anchor=tk.W, padding="5")
+        self.instructions_label.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
+
+        # --- Setup UI Elements ---
+        self._setup_main_menu_frame()
+        self._setup_calibration_frame()
+
+        # --- Start IMU Initialization in Background ---
+        # This prevents the GUI from freezing during the initial connection attempt
+        self.set_status("Connecting to IMU...", "Please wait...")
+        self.init_thread = threading.Thread(target=self._initialize_imu, daemon=True)
+        self.init_thread.start()
+        # Check periodically if the init thread is done
+        self.root.after(100, self._check_imu_init)
+
+    def _initialize_imu(self):
+        """Runs in a separate thread to avoid blocking the GUI."""
+        print("DEBUG: Background thread: Attempting to initialize IMUAPI...")
         try:
-            # Attempt to create an instance of the IMU API
-            # This is where the connection and initial communication happens
+            # This might block or take time
             self.imu = IMUAPI()
-            print("DEBUG: IMUAPI initialization successful.") # ADDED
-            self.status = "IMU Connected. Ready."
+            print("DEBUG: Background thread: IMUAPI initialization successful.")
         except (FileNotFoundError, KeyError, ValueError, IMUCommunicationError) as e:
-            # Handle specific errors during IMU initialization
             self.imu = None
-            print(f"DEBUG: IMUAPI Initialization Error: {str(e)}") # ADDED
-            self.status = f"Error initializing IMU: {str(e)}"
-            self.instructions = "Please check config.ini and connection."
+            self.imu_init_error = f"Error initializing IMU: {str(e)}"
+            print(f"DEBUG: Background thread: IMUAPI Initialization Error: {str(e)}")
         except Exception as e:
-            # Handle any other unexpected errors during initialization
             self.imu = None
-            print(f"DEBUG: IMUAPI Unexpected Initialization Error: {str(e)}") # ADDED
-            self.status = f"Unexpected Error: {str(e)}"
+            self.imu_init_error = f"Unexpected Error initializing IMU: {str(e)}"
+            print(f"DEBUG: Background thread: IMUAPI Unexpected Initialization Error: {str(e)}")
+
+    def _check_imu_init(self):
+        """Checks the result of the IMU initialization thread."""
+        if self.init_thread.is_alive():
+            # Still running, check again later
+            self.root.after(100, self._check_imu_init)
+        else:
+            # Thread finished
+            if self.imu:
+                self.set_status("IMU Connected. Ready.", "")
+                # Enable the main calibrate button now that IMU is ready
+                self.calibrate_button.config(state=tk.NORMAL)
+                # Start by showing the main menu
+                self._show_frame(self.main_menu_frame)
+            else:
+                # Update status with the error found in the background thread
+                self.set_status(self.imu_init_error or "Failed to connect to IMU.",
+                                "Please check config.ini and connection.")
+                # Keep calibrate button disabled
+                self.calibrate_button.config(state=tk.DISABLED)
+                # Show main menu frame even on error, but button is disabled
+                self._show_frame(self.main_menu_frame)
+
+    def _setup_main_menu_frame(self):
+        """Creates widgets for the main menu."""
+        # Clear the frame first if needed (though it's empty initially)
+        for widget in self.main_menu_frame.winfo_children():
+            widget.destroy()
+
+        label = ttk.Label(self.main_menu_frame, text="Main Menu", font=("Helvetica", 16))
+        label.pack(pady=20)
+
+        # Calibrate Button - Initially disabled, enabled when IMU connects
+        self.calibrate_button = ttk.Button(
+            self.main_menu_frame,
+            text="Calibrate IMU",
+            command=self._go_to_calibration,
+            state=tk.DISABLED # Enabled by _check_imu_init on success
+        )
+        self.calibrate_button.pack(pady=30, ipadx=20, ipady=10) # Make button larger
+
+        # Quit Button
+        quit_button = ttk.Button(
+            self.main_menu_frame,
+            text="Quit",
+            command=self._on_closing
+        )
+        quit_button.pack(pady=10)
 
 
-        # Define Buttons (position/size will be set in drawing logic)
-        # Buttons are stored in a dictionary, specific to the current state
-        self.buttons = {}
+    def _setup_calibration_frame(self):
+        """Creates widgets for the calibration menu."""
+         # Clear the frame first if needed
+        for widget in self.calibration_frame.winfo_children():
+            widget.destroy()
 
-    def draw_button(self, text: str, rect: pygame.Rect, enabled: bool = True) -> pygame.Rect:
-        """Draws a button and returns its Rect."""
-        # Set button color based on enabled status
-        color = (100, 100, 100) if enabled else (50, 50, 50)
-        text_color = (255, 255, 255) if enabled else (150, 150, 150)
-        # Draw the button rectangle
-        pygame.draw.rect(self.screen, color, rect)
-        # Render the button text
-        text_surf = self.font.render(text, True, text_color)
-        text_rect = text_surf.get_rect(center=rect.center)
-        # Draw the text onto the screen
-        self.screen.blit(text_surf, text_rect)
-        return rect
+        label = ttk.Label(self.calibration_frame, text="Calibration Steps", font=("Helvetica", 16))
+        label.pack(pady=20)
 
-    def draw_status_and_instructions(self):
-        """Draws the status and instruction lines at the bottom."""
-        # Render and draw the status text
-        status_text = self.font.render(f"Status: {self.status}", True, (255, 255, 255))
-        self.screen.blit(status_text, (20, self.screen_height - 80))
+        # Still Calibration Button
+        self.still_cal_button = ttk.Button(
+            self.calibration_frame,
+            text="1. Calibrate Still (Gravity+Gyro)",
+            command=self._do_still_calibration_tk
+        )
+        self.still_cal_button.pack(pady=10, fill=tk.X, padx=50)
 
-        # Render and draw the instruction text
-        instruction_text = self.font_small.render(self.instructions, True, (200, 200, 200))
-        self.screen.blit(instruction_text, (20, self.screen_height - 45))
+        # Motion Calibration Button
+        self.motion_cal_button = ttk.Button(
+            self.calibration_frame,
+            text="2. Calibrate Motion (Magnetometer)",
+            command=self._do_motion_calibration_tk
+        )
+        self.motion_cal_button.pack(pady=10, fill=tk.X, padx=50)
 
+        # Done Button
+        self.done_button = ttk.Button(
+            self.calibration_frame,
+            text="Done (Back to Main Menu)",
+            command=self._go_to_main_menu
+        )
+        self.done_button.pack(pady=30, fill=tk.X, padx=50)
+
+        # Initially disable calibration buttons until time is calibrated
+        self._set_calibration_buttons_state(tk.DISABLED)
+
+
+    def _show_frame(self, frame_to_show):
+        """Hides other frames and shows the specified frame."""
+        self.main_menu_frame.pack_forget()
+        self.calibration_frame.pack_forget()
+        frame_to_show.pack(fill=tk.BOTH, expand=True)
 
     def set_status(self, status: str, instructions: str = ""):
-        """Helper function to update status and instructions, and print to console."""
+        """Updates the status and instruction labels."""
         print(f"GUI Status: {status} | Instructions: {instructions}") # Also print to console
-        self.status = status
-        self.instructions = instructions
-        pygame.display.flip() # Update display immediately to show status change
+        self.status_var.set(f"Status: {status}")
+        self.instructions_var.set(f"Instructions: {instructions}")
+        # self.root.update_idletasks() # Force GUI update if needed, but usually automatic
 
-    # --- Calibration Methods ---
-    # These methods encapsulate the calls to the IMU API for different calibration steps.
+    def _set_calibration_buttons_state(self, state):
+        """Enable or disable calibration step buttons."""
+        self.still_cal_button.config(state=state)
+        self.motion_cal_button.config(state=state)
+        self.done_button.config(state=state) # Also control done button
 
-    def _do_time_calibration(self) -> bool:
-        """Attempts time calibration. Returns True on success, False on failure."""
+    def _go_to_calibration(self):
+        """Callback for the main 'Calibrate IMU' button."""
         if not self.imu:
             self.set_status("Error: IMU not connected.", "Cannot calibrate.")
-            return False
+            return
+
+        print("DEBUG: Calibrate button clicked. Attempting time calibration...")
+        self.set_status("Calibrating time...", "Communicating with IMU...")
+        self.calibrate_button.config(state=tk.DISABLED) # Disable while attempting
+
         try:
-            self.set_status("Calibrating time...", "Communicating with IMU...")
-            # Call the IMU API method for time calibration
+            # Time calibration is usually quick, do it directly
             offset = self.imu.calibrate_time()
             self.set_status(f"Time calibration successful.", f"IMU Offset: {offset} μs. Choose next step.")
-            return True
-        except (IMUCommunicationError, IMUTimeoutError) as e:
-            # Handle specific communication or timeout errors
-            self.set_status(f"Time calibration failed: {str(e)}", "Check connection and retry.")
-            return False
-        except Exception as e:
-            # Handle unexpected errors
-            self.set_status(f"Unexpected Error: {str(e)}", "Check connection/logs.")
-            return False
+            self.current_state = STATE_CALIBRATING
+            self._set_calibration_buttons_state(tk.NORMAL) # Enable calibration step buttons
+            self._show_frame(self.calibration_frame) # Switch to calibration frame
 
-    def _do_still_calibration(self):
-        """Performs gravity and gyro calibration (requires device to be still)."""
+        except (IMUCommunicationError, IMUTimeoutError) as e:
+            self.set_status(f"Time calibration failed: {str(e)}", "Check connection and retry.")
+            messagebox.showerror("Time Calibration Failed", f"{str(e)}\nCheck connection and retry.")
+            self.calibrate_button.config(state=tk.NORMAL) # Re-enable button on failure
+        except Exception as e:
+            self.set_status(f"Unexpected Error during time calibration: {str(e)}", "Check logs.")
+            messagebox.showerror("Time Calibration Error", f"An unexpected error occurred:\n{str(e)}")
+            self.calibrate_button.config(state=tk.NORMAL) # Re-enable button on failure
+
+    def _go_to_main_menu(self):
+        """Callback for the 'Done' button in calibration frame."""
+        self.current_state = STATE_MAIN_MENU
+        self._show_frame(self.main_menu_frame)
+        # Re-enable main calibrate button if IMU is still connected
+        if self.imu:
+             self.calibrate_button.config(state=tk.NORMAL)
+             self.set_status("IMU Connected. Ready.", "")
+        else:
+             self.calibrate_button.config(state=tk.DISABLED)
+             self.set_status(self.imu_init_error or "IMU Disconnected.", "Cannot calibrate.")
+        self.set_status("Returned to Main Menu.", "")
+
+
+    # --- Calibration Methods (Tkinter specific) ---
+
+    def _do_still_calibration_tk(self):
+        """Handles the 'Still Calibration' button click."""
         if not self.imu:
             self.set_status("Error: IMU not connected.")
+            messagebox.showerror("Error", "IMU not connected.")
             return
-        try:
-            # Provide instructions and wait for the user
-            instruction = f"Place device flat and still. Waiting {self.imu.still_delay:.1f}s..."
-            self.set_status("Preparing for Still Calibration.", instruction)
-            pygame.time.wait(int(self.imu.still_delay * 1000)) # Use pygame wait
 
-            # Calibrate Gravity
+        try:
+            delay_sec = self.imu.still_delay
+            delay_ms = int(delay_sec * 1000)
+            instruction = f"Place device flat and still. Waiting {delay_sec:.1f}s..."
+            self.set_status("Preparing for Still Calibration.", instruction)
+            self._set_calibration_buttons_state(tk.DISABLED) # Disable buttons during wait/cal
+
+            # Schedule the actual calibration after the delay
+            self.root.after(delay_ms, self._perform_actual_still_calibration)
+
+        except AttributeError:
+            self.set_status("Error: Could not find delay settings.", "Check IMU API/config.")
+            messagebox.showerror("Error", "Could not find delay settings in IMU API/config.")
+            self._set_calibration_buttons_state(tk.NORMAL) # Re-enable on error
+        except Exception as e:
+            self.set_status(f"Unexpected Error preparing still calibration: {str(e)}", "Check logs.")
+            messagebox.showerror("Error", f"Unexpected error: {str(e)}")
+            self._set_calibration_buttons_state(tk.NORMAL) # Re-enable on error
+
+    def _perform_actual_still_calibration(self):
+        """Called by root.after() to perform the still calibration steps."""
+        try:
+            # Gravity Calibration
             self.set_status("Calibrating Gravity...", "Keep device perfectly still.")
+            self.root.update_idletasks() # Ensure status update is visible
             self.imu.calibrate_gravity()
             self.set_status("Gravity calibrated.", "Starting Gyro calibration (keep still)...")
+            self.root.update_idletasks() # Ensure status update is visible
 
-            # Calibrate Gyro (immediately after gravity)
+            # Gyro Calibration (immediately after gravity)
             self.imu.calibrate_gyro()
             self.set_status("Still Calibration Complete.", "Gravity & Gyro calibrated.")
-            self.is_calibrated = True # Example: Set flag after a successful calibration part
+            self.is_calibrated = True # Example flag
 
         except (IMUCommunicationError, IMUCalibrationError, IMUTimeoutError) as e:
-            # Handle specific calibration or communication errors
             self.set_status(f"Still Calibration Error: {str(e)}", "Please try again.")
-        except AttributeError:
-            # Handle case where delay settings might be missing
-            self.set_status("Error: Could not find delay settings.", "Check IMU API/config.")
+            messagebox.showerror("Still Calibration Error", f"{str(e)}\nPlease try again.")
         except Exception as e:
-            # Handle unexpected errors
-            self.set_status(f"Unexpected Error: {str(e)}", "Check logs.")
+            self.set_status(f"Unexpected Error during still calibration: {str(e)}", "Check logs.")
+            messagebox.showerror("Still Calibration Error", f"An unexpected error occurred:\n{str(e)}")
+        finally:
+            # Re-enable buttons regardless of success or failure
+             self._set_calibration_buttons_state(tk.NORMAL)
 
-    def _do_motion_calibration(self):
-        """Performs magnetometer calibration (requires device rotation)."""
+
+    def _do_motion_calibration_tk(self):
+        """Handles the 'Motion Calibration' button click."""
         if not self.imu:
             self.set_status("Error: IMU not connected.")
+            messagebox.showerror("Error", "IMU not connected.")
             return
-        try:
-            # Provide instructions and wait before starting
-            prep_instruction = f"Prepare to rotate IMU through all axes. Starting in {self.imu.rotation_delay:.0f}s..."
-            self.set_status("Preparing for Motion Calibration.", prep_instruction)
-            # Use pygame event loop during wait to keep window responsive
-            start_wait = pygame.time.get_ticks()
-            while pygame.time.get_ticks() - start_wait < self.imu.rotation_delay * 1000:
-                 for event in pygame.event.get():
-                      if event.type == pygame.QUIT:
-                           self.quit_app()
-                 # Keep drawing status and instructions during wait
-                 self.screen.fill((50, 50, 50)) # Redraw background
-                 self.draw_status_and_instructions()
-                 pygame.display.flip() # Keep display updated
-                 self.clock.tick(30) # Small tick rate during wait
 
-            # Start magnetometer calibration
+        try:
+            delay_sec = self.imu.rotation_delay
+            delay_ms = int(delay_sec * 1000)
+            prep_instruction = f"Prepare to rotate IMU through all axes. Starting in {delay_sec:.0f}s..."
+            self.set_status("Preparing for Motion Calibration.", prep_instruction)
+            self._set_calibration_buttons_state(tk.DISABLED) # Disable buttons during wait/cal
+
+            # Schedule the actual calibration after the delay
+            self.root.after(delay_ms, self._perform_actual_motion_calibration)
+
+        except AttributeError:
+            self.set_status("Error: Could not find delay settings.", "Check IMU API/config.")
+            messagebox.showerror("Error", "Could not find delay settings in IMU API/config.")
+            self._set_calibration_buttons_state(tk.NORMAL) # Re-enable on error
+        except Exception as e:
+            self.set_status(f"Unexpected Error preparing motion calibration: {str(e)}", "Check logs.")
+            messagebox.showerror("Error", f"Unexpected error: {str(e)}")
+            self._set_calibration_buttons_state(tk.NORMAL) # Re-enable on error
+
+    def _perform_actual_motion_calibration(self):
+        """Called by root.after() to perform the motion calibration step."""
+        try:
             self.set_status("Calibrating Magnetometer...", "Rotate IMU slowly in all directions for ~10s.")
+            self.root.update_idletasks() # Ensure status update is visible
             self.imu.calibrate_mag() # API handles the timing internally
             self.set_status("Motion Calibration Complete.", "Magnetometer calibrated.")
-            self.is_calibrated = True # Example: Set flag after a successful calibration part
+            self.is_calibrated = True # Example flag
 
         except (IMUCommunicationError, IMUCalibrationError, IMUTimeoutError) as e:
-            # Handle specific calibration or communication errors
             self.set_status(f"Motion Calibration Error: {str(e)}", "Please try again.")
-        except AttributeError:
-            # Handle case where delay settings might be missing
-            self.set_status("Error: Could not find delay settings.", "Check IMU API/config.")
+            messagebox.showerror("Motion Calibration Error", f"{str(e)}\nPlease try again.")
         except Exception as e:
-            # Handle unexpected errors
-            self.set_status(f"Unexpected Error: {str(e)}", "Check logs.")
+            self.set_status(f"Unexpected Error during motion calibration: {str(e)}", "Check logs.")
+            messagebox.showerror("Motion Calibration Error", f"An unexpected error occurred:\n{str(e)}")
+        finally:
+            # Re-enable buttons regardless of success or failure
+            self._set_calibration_buttons_state(tk.NORMAL)
 
-    def quit_app(self):
-        """Handles closing the application gracefully."""
-        print("Quitting application...") # ADDED Debug print
+
+    def _on_closing(self):
+        """Handles the window close event."""
+        print("DEBUG: Window closing...")
         if self.imu:
             print("Closing serial port...")
-            self.imu.close()
-        pygame.quit()
-        sys.exit()
-
-    # --- State Drawing and Handling ---
-    # Methods to draw UI elements and handle events specific to each state.
-
-    def draw_main_menu(self):
-        """Draws the main menu UI elements."""
-        self.buttons = {} # Clear buttons from other states
-        button_width = 300
-        button_height = 60
-        x_pos = (self.screen_width - button_width) // 2
-        y_pos = (self.screen_height - button_height) // 2 - 50 # Center vertically
-
-        # Draw the "Calibrate IMU" button
-        calibrate_rect = pygame.Rect(x_pos, y_pos, button_width, button_height)
-        # Enable button only if IMU is connected
-        self.buttons['calibrate'] = self.draw_button("Calibrate IMU", calibrate_rect, enabled=(self.imu is not None))
-
-    def handle_main_menu_event(self, event):
-        """Handles events specific to the main menu state."""
-        if event.type == pygame.MOUSEBUTTONDOWN:
-            # Check if the calibrate button was clicked and is enabled
-            if 'calibrate' in self.buttons and self.buttons['calibrate'].collidepoint(event.pos) and self.imu:
-                print("DEBUG: Calibrate button clicked.") # ADDED
-                # Attempt time calibration before moving to the calibration menu
-                if self._do_time_calibration():
-                     self.current_state = STATE_CALIBRATING
-                     # Reset status for the new state
-                     self.set_status("Calibration Menu", "Choose calibration type or Done.")
-                else:
-                     print("DEBUG: Time calibration failed, staying in main menu.") # ADDED
+            try:
+                self.imu.close()
+            except Exception as e:
+                print(f"Error closing IMU port: {e}") # Log error but continue closing GUI
+        self.root.destroy() # Close the Tkinter window
 
 
-    def draw_calibration_menu(self):
-        """Draws the calibration menu UI elements."""
-        self.buttons = {} # Clear buttons from other states
-        button_width = 600 # Wider buttons for this menu
-        button_height = 60
-        x_pos = (self.screen_width - button_width) // 2
-        y_start = 100 # Starting Y position for the first button
-        spacing = 80 # Vertical spacing between buttons
-
-        # Draw "Calibrate Still" button
-        still_rect = pygame.Rect(x_pos, y_start, button_width, button_height)
-        self.buttons['still'] = self.draw_button("Calibrate Still (Gravity+Gyro)", still_rect)
-
-        # Draw "Calibrate Motion" button
-        motion_rect = pygame.Rect(x_pos, y_start + spacing, button_width, button_height)
-        self.buttons['motion'] = self.draw_button("Calibrate Motion (Magnetometer)", motion_rect)
-
-        # Draw "Done" button
-        done_rect = pygame.Rect(x_pos, y_start + 2 * spacing + 20, button_width, button_height) # Add extra space before Done
-        self.buttons['done'] = self.draw_button("Done (Back to Main Menu)", done_rect)
-
-    def handle_calibration_menu_event(self, event):
-         """Handles events specific to the calibration menu state."""
-         if event.type == pygame.MOUSEBUTTONDOWN:
-            pos = event.pos
-            # Check which button was clicked
-            if 'still' in self.buttons and self.buttons['still'].collidepoint(pos):
-                print("DEBUG: Still calibration button clicked.") # ADDED
-                self._do_still_calibration()
-            elif 'motion' in self.buttons and self.buttons['motion'].collidepoint(pos):
-                print("DEBUG: Motion calibration button clicked.") # ADDED
-                self._do_motion_calibration()
-            elif 'done' in self.buttons and self.buttons['done'].collidepoint(pos):
-                print("DEBUG: Done button clicked.") # ADDED
-                self.current_state = STATE_MAIN_MENU
-                # Reset status message for the main menu
-                self.set_status("IMU Connected. Ready.", "")
-
-
-    # --- Main Loop ---
-
-    def run(self):
-        """The main application loop."""
-        print("DEBUG: Starting main loop...") # ADDED
-        while True:
-            # --- Event Handling ---
-            for event in pygame.event.get():
-                # Handle quit event (closing the window)
-                if event.type == pygame.QUIT:
-                    self.quit_app()
-
-                # Handle events based on the current state
-                if self.current_state == STATE_MAIN_MENU:
-                    self.handle_main_menu_event(event)
-                elif self.current_state == STATE_CALIBRATING:
-                    self.handle_calibration_menu_event(event)
-
-            # --- Drawing ---
-            self.screen.fill((50, 50, 50)) # Fill background with dark grey
-
-            # Draw UI elements based on the current state
-            if self.current_state == STATE_MAIN_MENU:
-                self.draw_main_menu()
-            elif self.current_state == STATE_CALIBRATING:
-                self.draw_calibration_menu()
-
-            # Draw status and instructions at the bottom (common to all states)
-            self.draw_status_and_instructions()
-
-            # --- Update Display ---
-            pygame.display.flip() # Update the full screen to show drawn elements
-
-            # --- Frame Rate Control ---
-            self.clock.tick(60) # Limit frame rate to 60 FPS
-
-# Entry point of the script
+# --- Main Execution ---
 if __name__ == "__main__":
-    print("DEBUG: Creating CalibrationGUI instance...") # ADDED
-    gui = CalibrationGUI()
-    print("DEBUG: Calling gui.run()...") # ADDED
-    gui.run()
+    print("DEBUG: Creating Tkinter root window...")
+    root = tk.Tk()
+    print("DEBUG: Creating CalibrationGUI_Tk instance...")
+    app = CalibrationGUI_Tk(root)
+    print("DEBUG: Starting Tkinter main loop...")
+    root.mainloop()
+    print("DEBUG: Tkinter main loop finished.")
+
