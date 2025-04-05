@@ -422,6 +422,8 @@ class CalibrationGUI_Tk:
         print(f"DEBUG: DataCollector is None: {DataCollector is None}")
         # --- END ADDED LOGGING ---
 
+        button_state_after_config = "unknown" # Initialize
+
         if self.imu_api:
              status_msg = "IMU API Ready."
              status_msg += " LiDAR Active." if self.imu_api.lidar and self.imu_api.lidar._is_connected else " LiDAR Inactive."
@@ -430,6 +432,15 @@ class CalibrationGUI_Tk:
              if DataCollector:
                   self.start_collection_button.config(state=tk.NORMAL)
                   print("DEBUG (_go_to_main_menu): Enabling Start Collection button.")
+                  # --- ADDED: Force update and check state ---
+                  try:
+                       print("DEBUG (_go_to_main_menu): Forcing GUI update...")
+                       self.root.update_idletasks()
+                       button_state_after_config = self.start_collection_button.cget('state')
+                       print(f"DEBUG (_go_to_main_menu): Button state *after* config and update: {button_state_after_config}")
+                  except Exception as e:
+                       print(f"DEBUG (_go_to_main_menu): Error during update/cget: {e}")
+                  # --- END ADDED ---
              else:
                   self.start_collection_button.config(state=tk.DISABLED)
                   print("DEBUG (_go_to_main_menu): DataCollector is None, keeping Start Collection button DISABLED.")
@@ -479,4 +490,3 @@ if __name__ == "__main__":
          except: pass
     finally:
          print("DEBUG: Application finished.")
-
