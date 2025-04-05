@@ -1,51 +1,46 @@
 
 # IMU Data Collection System
 
-This Arduino program collects data from the MKR IMU (Inertial Measurement Unit) and sends it through serial communication at 115200 baud rate.
+This Arduino program collects calibrated data from the MKR IMU at high sample rates.
 
-## Sensor Data Types
-- Accelerometer (100Hz): Linear acceleration with gravity compensation
-- Gyroscope (100Hz): Angular velocity
-- Magnetometer (20Hz): Magnetic field strength
-- Euler angles (100Hz): Device orientation
+## Calibration Procedures
+The system requires several calibration steps:
 
-## Buffer Sizes
-- Accelerometer: 20 readings
-- Gyroscope: 20 readings
-- Magnetometer: 5 readings
-- Euler angles: 20 readings
+1. Time Synchronization
+   - Establishes timestamp offset between host and IMU
+   - Run before each scanning session
+   - Automatically handles communication latency
 
-## Protocol
+2. Gravity Calibration  
+   - Determines local gravity vector
+   - Place IMU flat and stationary
+   - Takes ~1 second to complete
 
-### Initialization
-1. Send "calibrate" over serial to begin gravity calibration
-2. Keep device still during calibration (~1 second)
-3. System will output calibrated gravity vector
+3. Gyroscope Calibration
+   - Determines gyro bias/drift
+   - Keep IMU stationary
+   - Takes ~2 seconds
 
-### Data Format
-Data is sent in blocks every 100ms with the following format:
+4. Magnetometer Calibration
+   - Compensates for hard/soft iron effects
+   - Rotate IMU through all orientations
+   - Takes 10 seconds
 
+## Data Protocol
+Data blocks sent every 100ms:
 ```
 BEGIN_DATA_BLOCK,magCount,accelCount,eulerCount,gyroCount
-M,timestamp,x,y,z    // Magnetometer readings
-A,timestamp,x,y,z    // Accelerometer readings (gravity compensated)
+M,timestamp,x,y,z    // Calibrated magnetometer 
+A,timestamp,x,y,z    // Gravity-compensated accelerometer
 E,timestamp,x,y,z    // Euler angles
-G,timestamp,x,y,z    // Gyroscope readings
+G,timestamp,x,y,z    // Bias-compensated gyroscope
 END_DATA_BLOCK
 ```
 
-### Timestamps
-- All timestamps are in microseconds (µs)
-- Use timestamps for precise sensor data synchronization
-
-## Key Functions
-- `setup()`: Initializes IMU and waits for calibration command
-- `calibrateGravity()`: Calibrates gravity vector for compensation
-- `collectSensorData()`: Continuously reads sensor data into buffers
-- `sendAllData()`: Transmits buffered data over serial
-- `resetBuffers()`: Clears all data buffers after transmission
-
-## Error Handling
-- IMU initialization failure: Continuous loop with error message
-- Buffer overflow protection: Forces data transmission if buffers fill
-- Failed gravity calibration: Falls back to default values [0,0,1]
+## Commands
+- time_calibrate: Start time sync
+- gravity_calibrate: Calibrate gravity
+- gyro_calibrate: Calibrate gyroscope
+- mag_calibrate: Calibrate magnetometer
+- start_collection: Begin data streaming
+- stop_collection: Stop data streaming
