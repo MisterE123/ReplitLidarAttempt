@@ -1,0 +1,252 @@
+#include <MKRIMU.h>
+
+// Buffer size based on actual IMU capabilities
+// For 100ms collection period:
+// - Accelerometer: ~100Hz = 10 readings
+// - Gyroscope: ~100Hz = 10 readings
+// - Magnetometer: ~20Hz = 2 readings
+// - Euler angles: ~100Hz = 10 readings
+// With margin of safety (2x)
+const int ACCEL_BUFFER_SIZE = 20;
+const int GYRO_BUFFER_SIZE = 20;
+const int MAG_BUFFER_SIZE = 5;
+const int EULER_BUFFER_SIZE = 20;
+
+// Sensor reading structure
+struct SensorReading {
+  unsigned long timestamp;
+  float x, y, z;
+};
+
+// Buffers for each sensor type
+SensorReading magBuffer[MAG_BUFFER_SIZE];
+SensorReading accelBuffer[ACCEL_BUFFER_SIZE];
+SensorReading eulerBuffer[EULER_BUFFER_SIZE];
+SensorReading gyroBuffer[GYRO_BUFFER_SIZE];
+
+// Buffer indices and counts
+int magCount = 0;
+int accelCount = 0;
+int eulerCount = 0;
+int gyroCount = 0;
+
+// Variables for gravity compensation
+float gravityX = 0.0;
+float gravityY = 0.0;
+float gravityZ = 0.0;
+
+// Timing variables
+unsigned long lastSendTime = 0;
+const unsigned long SEND_INTERVAL = 100;  // Send every 100ms
+
+void setup() {
+  Serial.begin(115200);  // Higher baud rate for more bandwidth
+  while (!Serial);
+
+  if (!IMU.begin()) {
+    Serial.println("Failed to initialize IMU!");
+    while (1);
+  }
+
+  // Wait for IMU to settle
+  delay(1000);
+
+  // Calibrate gravity
+  calibrateGravity();
+
+  // Reset the timer
+  lastSendTime = millis();
+}
+
+void calibrateGravity() {
+  Serial.println("Calibrating gravity. Keep device still...");
+
+  // Number of samples to average
+  const int numSamples = 100;
+
+  float sumX = 0.0;
+  float sumY = 0.0;
+  float sumZ = 0.0;
+  int sampleCount = 0;
+
+  // Collect samples for about 1 second
+  unsigned long startTime = millis();
+  while (millis() - startTime < 1000 && sampleCount < numSamples) {
+    if (IMU.accelerationAvailable()) {
+      float x, y, z;
+      IMU.readAcceleration(x, y, z);
+
+      sumX += x;
+      sumY += y;
+      sumZ += z;
+      sampleCount++;
+
+      delay(10);  // Small delay between readings
+    }
+  }
+
+  // Calculate average gravity vector if samples were collected
+  if (sampleCount > 0) {
+    gravityX = sumX / sampleCount;
+    gravityY = sumY / sampleCount;
+    gravityZ = sumZ / sampleCount;
+
+    Serial.print("Gravity calibrated: [");
+    Serial.print(gravityX);
+    Serial.print(", ");
+    Serial.print(gravityY);
+    Serial.print(", ");
+    Serial.print(gravityZ);
+    Serial.println("]");
+  } else {
+    Serial.println("Gravity calibration failed. Using default values.");
+    // Earth gravity is approximately 1g in the downward direction
+    // Depending on orientation, set default based on expected mounting position
+    gravityX = 0.0;
+    gravityY = 0.0;
+    gravityZ = 1.0;
+  }
+}
+
+void loop() {
+  // Collect data continuously at the IMU's natural rate
+  collectSensorData();
+
+  // Check if it's time to send data
+  unsigned long currentTime = millis();
+  if (currentTime - lastSendTime >= SEND_INTERVAL) {
+    sendAllData();
+    resetBuffers();
+    lastSendTime = currentTime;
+  }
+}
+
+void collectSensorData() {
+  float x, y, z;
+  unsigned long timestamp = micros();  // Use microseconds for more precise timing
+
+  // Read magnetic field data (slower rate)
+  if (IMU.magneticFieldAvailable() && magCount < MAG_BUFFER_SIZE) {
+    IMU.readMagneticField(x, y, z);
+    magBuffer[magCount].timestamp = timestamp;
+    magBuffer[magCount].x = x;
+    magBuffer[magCount].y = y;
+    magBuffer[magCount].z = z;
+    magCount++;
+  }
+
+  // Read acceleration data with gravity compensation
+  if (IMU.accelerationAvailable() && accelCount < ACCEL_BUFFER_SIZE) {
+    IMU.readAcceleration(x, y, z);
+    accelBuffer[accelCount].timestamp = timestamp;
+    // Remove gravity component
+    accelBuffer[accelCount].x = x - gravityX;
+    accelBuffer[accelCount].y = y - gravityY;
+    accelBuffer[accelCount].z = z - gravityZ;
+    accelCount++;
+  }
+
+  // Read Euler angles data
+  if (IMU.eulerAnglesAvailable() && eulerCount < EULER_BUFFER_SIZE) {
+    IMU.readEulerAngles(x, y, z);
+    eulerBuffer[eulerCount].timestamp = timestamp;
+    eulerBuffer[eulerCount].x = x;
+    eulerBuffer[eulerCount].y = y;
+    eulerBuffer[eulerCount].z = z;
+    eulerCount++;
+  }
+
+  // Read gyroscope data
+  if (IMU.gyroscopeAvailable() && gyroCount < GYRO_BUFFER_SIZE) {
+    IMU.readGyroscope(x, y, z);
+    gyroBuffer[gyroCount].timestamp = timestamp;
+    gyroBuffer[gyroCount].x = x;
+    gyroBuffer[gyroCount].y = y;
+    gyroBuffer[gyroCount].z = z;
+    gyroCount++;
+  }
+
+  // Check for buffer overflow and warn if needed
+  if (magCount >= MAG_BUFFER_SIZE || 
+      accelCount >= ACCEL_BUFFER_SIZE ||
+      eulerCount >= EULER_BUFFER_SIZE ||
+      gyroCount >= GYRO_BUFFER_SIZE) {
+    // Force a data send if any buffer is full
+    unsigned long currentTime = millis();
+    if (currentTime - lastSendTime >= 50) {  // At least 50ms since last send
+      sendAllData();
+      resetBuffers();
+      lastSendTime = currentTime;
+    }
+  }
+}
+
+void sendAllData() {
+  // Begin data block with a marker and counts
+  Serial.print("BEGIN_DATA_BLOCK,");
+  Serial.print(magCount);
+  Serial.print(",");
+  Serial.print(accelCount);
+  Serial.print(",");
+  Serial.print(eulerCount);
+  Serial.print(",");
+  Serial.println(gyroCount);
+
+  // Send magnetic field data
+  for (int i = 0; i < magCount; i++) {
+    Serial.print("M,");
+    Serial.print(magBuffer[i].timestamp);
+    Serial.print(",");
+    Serial.print(magBuffer[i].x, 6);
+    Serial.print(",");
+    Serial.print(magBuffer[i].y, 6);
+    Serial.print(",");
+    Serial.println(magBuffer[i].z, 6);
+  }
+
+  // Send acceleration data
+  for (int i = 0; i < accelCount; i++) {
+    Serial.print("A,");
+    Serial.print(accelBuffer[i].timestamp);
+    Serial.print(",");
+    Serial.print(accelBuffer[i].x, 6);
+    Serial.print(",");
+    Serial.print(accelBuffer[i].y, 6);
+    Serial.print(",");
+    Serial.println(accelBuffer[i].z, 6);
+  }
+
+  // Send Euler angles data
+  for (int i = 0; i < eulerCount; i++) {
+    Serial.print("E,");
+    Serial.print(eulerBuffer[i].timestamp);
+    Serial.print(",");
+    Serial.print(eulerBuffer[i].x, 6);
+    Serial.print(",");
+    Serial.print(eulerBuffer[i].y, 6);
+    Serial.print(",");
+    Serial.println(eulerBuffer[i].z, 6);
+  }
+
+  // Send gyroscope data
+  for (int i = 0; i < gyroCount; i++) {
+    Serial.print("G,");
+    Serial.print(gyroBuffer[i].timestamp);
+    Serial.print(",");
+    Serial.print(gyroBuffer[i].x, 6);
+    Serial.print(",");
+    Serial.print(gyroBuffer[i].y, 6);
+    Serial.print(",");
+    Serial.println(gyroBuffer[i].z, 6);
+  }
+
+  // End data block
+  Serial.println("END_DATA_BLOCK");
+}
+
+void resetBuffers() {
+  magCount = 0;
+  accelCount = 0;
+  eulerCount = 0;
+  gyroCount = 0;
+}
