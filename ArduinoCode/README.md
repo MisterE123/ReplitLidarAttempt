@@ -7,9 +7,10 @@ This Arduino program collects calibrated data from the MKR IMU at high sample ra
 The system requires several calibration steps:
 
 1. Time Synchronization
-   - Establishes timestamp offset between host and IMU
+   - Establishes timestamp offset between host and IMU 
    - Run before each scanning session
-   - Automatically handles communication latency
+   - Measures communication latency
+   - Does not require the IMU to be stationary
 
 2. Gravity Calibration  
    - Determines local gravity vector

@@ -13,7 +13,7 @@ class CalibrationGUI:
         self.clock = pygame.time.Clock()
         
         self.steps = [
-            ("Time Calibration", "Keep IMU stationary", self.calibrate_time),
+            ("Time Calibration", "Measuring communication latency...", self.calibrate_time),
             ("Gravity Calibration", "Place IMU flat on surface", self.calibrate_gravity),
             ("Gyroscope Calibration", "Keep IMU stationary", self.calibrate_gyro),
             ("Magnetometer Calibration", "Rotate IMU in all directions", self.calibrate_mag)
