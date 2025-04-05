@@ -1,20 +1,30 @@
-# Assuming a file structure like this:
-# my_project/
-# ├── python/
-# │   └── imu_calibration.py
-# └── main.py
 
-# python/imu_calibration.py
-class IMUCalibration:
-    def __init__(self):
-        pass
+from flask import Flask, jsonify
+from imu_calibration import IMUCalibration
+import time
 
-    def calibrate(self):
-        print("IMU Calibration in progress...")
+app = Flask(__name__)
+imu = IMUCalibration()
 
-# main.py
-from .python.imu_calibration import IMUCalibration # Updated import path
+@app.route('/calibrate/time')
+def calibrate_time():
+    offset = imu.time_calibration()
+    return jsonify({'offset_us': offset})
 
+@app.route('/calibrate/gravity')
+def calibrate_gravity():
+    gx, gy, gz = imu.gravity_calibration()
+    return jsonify({'gravity_vector': [gx, gy, gz]})
 
-calibrator = IMUCalibration()
-calibrator.calibrate()
+@app.route('/calibrate/gyro')
+def calibrate_gyro():
+    imu.gyro_calibration()
+    return jsonify({'status': 'success'})
+
+@app.route('/calibrate/mag')
+def calibrate_mag():
+    imu.mag_calibration()
+    return jsonify({'status': 'success'})
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
