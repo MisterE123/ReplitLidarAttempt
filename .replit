@@ -1,2 +1,14 @@
 [nix]
 channel = "stable-24_05"
+
+[workflows]
+runButton = "Run IMU Calibration"
+
+[[workflows.workflow]]
+name = "Run IMU Calibration"
+author = 41159486
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python python/calibration_gui.py"

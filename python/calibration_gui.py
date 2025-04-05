@@ -1,54 +1,83 @@
 
-import tkinter as tk
-from tkinter import ttk, messagebox
+import pygame
+import sys
 from imu_api import IMUAPI
 
 class CalibrationGUI:
     def __init__(self):
-        self.root = tk.Tk()
-        self.root.title("IMU Calibration")
+        pygame.init()
+        self.screen = pygame.display.set_mode((800, 600))
+        pygame.display.set_caption("IMU Calibration")
+        self.clock = pygame.time.Clock()
+        self.font = pygame.font.Font(None, 36)
         self.imu = IMUAPI()
-        self.setup_ui()
-        
-    def setup_ui(self):
-        frame = ttk.Frame(self.root, padding="10")
-        frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        
-        ttk.Button(frame, text="Time Calibration", command=self.calibrate_time).grid(row=0, column=0, pady=5)
-        ttk.Button(frame, text="Gravity Calibration", command=self.calibrate_gravity).grid(row=1, column=0, pady=5)
-        ttk.Button(frame, text="Gyro Calibration", command=self.calibrate_gyro).grid(row=2, column=0, pady=5)
-        ttk.Button(frame, text="Mag Calibration", command=self.calibrate_mag).grid(row=3, column=0, pady=5)
+        self.status = "Ready"
+        self.buttons = [
+            {"text": "Time Calibration", "action": self.calibrate_time},
+            {"text": "Gravity Calibration", "action": self.calibrate_gravity},
+            {"text": "Gyro Calibration", "action": self.calibrate_gyro},
+            {"text": "Mag Calibration", "action": self.calibrate_mag}
+        ]
+
+    def draw_button(self, text: str, pos: tuple, size: tuple) -> pygame.Rect:
+        rect = pygame.Rect(pos, size)
+        pygame.draw.rect(self.screen, (100, 100, 100), rect)
+        text_surf = self.font.render(text, True, (255, 255, 255))
+        text_rect = text_surf.get_rect(center=rect.center)
+        self.screen.blit(text_surf, text_rect)
+        return rect
+
+    def draw_status(self):
+        text = self.font.render(self.status, True, (255, 255, 255))
+        self.screen.blit(text, (20, 550))
 
     def calibrate_time(self):
         try:
             offset = self.imu.calibrate_time()
-            messagebox.showinfo("Success", f"Time offset: {offset} microseconds")
+            self.status = f"Time offset: {offset} μs"
         except Exception as e:
-            messagebox.showerror("Error", str(e))
+            self.status = f"Error: {str(e)}"
 
     def calibrate_gravity(self):
         try:
             gx, gy, gz = self.imu.calibrate_gravity()
-            messagebox.showinfo("Success", f"Gravity vector: [{gx:.2f}, {gy:.2f}, {gz:.2f}]")
+            self.status = f"Gravity vector: [{gx:.2f}, {gy:.2f}, {gz:.2f}]"
         except Exception as e:
-            messagebox.showerror("Error", str(e))
+            self.status = f"Error: {str(e)}"
 
     def calibrate_gyro(self):
         try:
             self.imu.calibrate_gyro()
-            messagebox.showinfo("Success", "Gyroscope calibration complete")
+            self.status = "Gyro calibration complete"
         except Exception as e:
-            messagebox.showerror("Error", str(e))
+            self.status = f"Error: {str(e)}"
 
     def calibrate_mag(self):
         try:
             self.imu.calibrate_mag()
-            messagebox.showinfo("Success", "Magnetometer calibration complete")
+            self.status = "Magnetometer calibration complete"
         except Exception as e:
-            messagebox.showerror("Error", str(e))
+            self.status = f"Error: {str(e)}"
 
     def run(self):
-        self.root.mainloop()
+        while True:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    pos = pygame.mouse.get_pos()
+                    for i, button in enumerate(self.buttons):
+                        rect = pygame.Rect(50, 100 + i*80, 700, 60)
+                        if rect.collidepoint(pos):
+                            button["action"]()
+
+            self.screen.fill((50, 50, 50))
+            for i, button in enumerate(self.buttons):
+                self.draw_button(button["text"], (50, 100 + i*80), (700, 60))
+            self.draw_status()
+            pygame.display.flip()
+            self.clock.tick(60)
 
 if __name__ == "__main__":
     gui = CalibrationGUI()
