@@ -157,15 +157,23 @@ class CalibrationGUI_Tk:
     def _setup_main_menu_frame(self):
         """Creates widgets for the main menu."""
         for widget in self.main_menu_frame.winfo_children(): widget.destroy()
-        label = ttk.Label(self.main_menu_frame, text="Main Menu", font=("Helvetica", 16)); label.pack(pady=20)
+        label = ttk.Label(self.main_menu_frame, text="Main Menu", font=("Helvetica", 16))
+        # --- Use consistent packing ---
+        # Pack label simply at the top
+        label.pack(pady=10)
+        # Use calibration button options for all main menu buttons
+        cal_pack_options = {'pady': 20, 'fill': tk.X, 'padx': 50}
+
         self.calibrate_button = ttk.Button(self.main_menu_frame, text="Start Calibration", command=self._go_to_calibration_steps, state=tk.DISABLED)
-        self.calibrate_button.pack(pady=15, ipadx=20, ipady=10)
+        self.calibrate_button.pack(**cal_pack_options)
         self.start_collection_button = ttk.Button(self.main_menu_frame, text="Start Data Collection", command=self._start_data_collection, state=tk.DISABLED)
         self.stop_collection_button = ttk.Button(self.main_menu_frame, text="STOP Data Collection", command=self._stop_data_collection, style='Stop.TButton', state=tk.DISABLED)
-        self.start_collection_button.pack(pady=15, ipadx=20, ipady=10) # Start shown initially
-        quit_button = ttk.Button(self.main_menu_frame, text="Quit", command=self._on_closing); quit_button.pack(pady=15)
+        # Pack start button initially, stop button will be handled later
+        self.start_collection_button.pack(**cal_pack_options)
+        quit_button = ttk.Button(self.main_menu_frame, text="Quit", command=self._on_closing)
+        quit_button.pack(**cal_pack_options)
+        # --- End consistent packing ---
         if DataCollector is None:
-             # Log this potential issue during setup
              self.log_status("Data collection disabled (DataCollector is None at setup).", tag='warning')
              self.start_collection_button.config(state=tk.DISABLED)
 
@@ -184,6 +192,7 @@ class CalibrationGUI_Tk:
         for btn in buttons:
             if btn and btn.winfo_ismapped(): btn.pack_forget()
         if button_to_show:
+            # Keep original packing here
             button_to_show.pack(pady=20, fill=tk.X, padx=50); button_to_show.config(state=tk.NORMAL)
 
     # --- Frame Navigation ---
@@ -191,7 +200,7 @@ class CalibrationGUI_Tk:
         """Shows the specified frame."""
         self.main_menu_frame.pack_forget(); self.calibration_frame.pack_forget()
         frame_to_show.pack(fill=tk.BOTH, expand=True)
-        print(f"DEBUG (_show_frame): Showing frame {frame_to_show}") # Log which frame is shown
+        print(f"DEBUG (_show_frame): Showing frame {frame_to_show}")
 
     def _go_to_calibration_steps(self):
         """Navigates to the calibration frame."""
@@ -319,12 +328,16 @@ class CalibrationGUI_Tk:
         self.current_state = STATE_COLLECTING
         self.is_collecting = True
 
+        # Define pack options once
+        cal_pack_options = {'pady': 20, 'fill': tk.X, 'padx': 50}
+
         # Disable buttons
         self.calibrate_button.config(state=tk.DISABLED)
         self.start_collection_button.config(state=tk.DISABLED) # Disable start btn itself
         self.start_collection_button.pack_forget()
         self.stop_collection_button.config(state=tk.NORMAL)
-        self.stop_collection_button.pack(pady=15, ipadx=20, ipady=10)
+        # Use consistent packing for stop button
+        self.stop_collection_button.pack(**cal_pack_options)
 
         # Create DataCollector instance (moved here from thread)
         try:
@@ -387,14 +400,15 @@ class CalibrationGUI_Tk:
         self.collection_thread = None
         self.data_collector_instance = None # Clear instance
 
+        # Define pack options once
+        cal_pack_options = {'pady': 20, 'fill': tk.X, 'padx': 50}
+
         # Update button states
         self.stop_collection_button.pack_forget()
 
-        # --- ADDED LOGGING before setting button state ---
         print(f"DEBUG (_collection_finished_update): Checking conditions before enabling buttons.")
         print(f"DEBUG: self.imu_api is None: {self.imu_api is None}")
         print(f"DEBUG: DataCollector is None: {DataCollector is None}")
-        # --- END ADDED LOGGING ---
 
         if self.imu_api and DataCollector:
              self.start_collection_button.config(state=tk.NORMAL)
@@ -405,13 +419,11 @@ class CalibrationGUI_Tk:
              self.calibrate_button.config(state=tk.DISABLED)
              print("DEBUG (_collection_finished_update): Keeping Start Collection and Calibrate buttons DISABLED.")
 
-        # --- MODIFIED: Explicitly pack start button here ---
         is_mapped = self.start_collection_button.winfo_ismapped()
         print(f"DEBUG (_collection_finished_update): Start button is_mapped before pack: {is_mapped}")
-        # Always pack it here to ensure it's managed after stop button is forgotten
-        self.start_collection_button.pack(pady=15, ipadx=20, ipady=10)
+        # Use consistent packing
+        self.start_collection_button.pack(**cal_pack_options)
         print(f"DEBUG (_collection_finished_update): Explicitly packed start button.")
-        # --- END MODIFIED ---
 
 
     # --- Navigation and Closing ---
@@ -421,13 +433,12 @@ class CalibrationGUI_Tk:
         self._show_calibration_button(None) # Hide calibration buttons
         self._show_frame(self.main_menu_frame) # Show main frame
 
-        # --- ADDED LOGGING before setting button state ---
         print(f"DEBUG (_go_to_main_menu): Checking conditions before setting button states.")
         print(f"DEBUG: self.imu_api is None: {self.imu_api is None}")
         print(f"DEBUG: DataCollector is None: {DataCollector is None}")
-        # --- END ADDED LOGGING ---
 
         button_state_after_config = "unknown" # Initialize
+        cal_pack_options = {'pady': 20, 'fill': tk.X, 'padx': 50} # Define options
 
         # Set button states
         if self.imu_api:
@@ -438,7 +449,6 @@ class CalibrationGUI_Tk:
              if DataCollector:
                   self.start_collection_button.config(state=tk.NORMAL)
                   print("DEBUG (_go_to_main_menu): Enabling Start Collection button.")
-                  # --- ADDED: Force update and check state ---
                   try:
                        print("DEBUG (_go_to_main_menu): Forcing GUI update...")
                        self.root.update_idletasks()
@@ -446,7 +456,6 @@ class CalibrationGUI_Tk:
                        print(f"DEBUG (_go_to_main_menu): Button state *after* config and update: {button_state_after_config}")
                   except Exception as e:
                        print(f"DEBUG (_go_to_main_menu): Error during update/cget: {e}")
-                  # --- END ADDED ---
              else:
                   self.start_collection_button.config(state=tk.DISABLED)
                   print("DEBUG (_go_to_main_menu): DataCollector is None, keeping Start Collection button DISABLED.")
@@ -466,10 +475,24 @@ class CalibrationGUI_Tk:
         print(f"DEBUG (_go_to_main_menu): Start button is_mapped before explicit pack: {is_mapped}")
 
         # 3. Always pack the start button to ensure it's in the layout
-        #    Using the same pack options as in _setup_main_menu_frame
-        self.start_collection_button.pack(pady=15, ipadx=20, ipady=10)
+        #    Using consistent pack options
+        self.start_collection_button.pack(**cal_pack_options) # Use consistent options
         print(f"DEBUG (_go_to_main_menu): Explicitly packed start button.")
         # --- END MODIFIED ---
+
+        # --- ADDED: Log frame children ---
+        try:
+             print(f"DEBUG (_go_to_main_menu): Children of main_menu_frame ({self.main_menu_frame}):")
+             for child in self.main_menu_frame.winfo_children():
+                  print(f"  - {child} (Type: {child.winfo_class()})")
+             # pack_slaves() might give more insight into packer state
+             print(f"DEBUG (_go_to_main_menu): Pack slaves of main_menu_frame:")
+             for slave in self.main_menu_frame.pack_slaves():
+                  print(f"  - {slave}")
+        except Exception as e:
+             print(f"DEBUG (_go_to_main_menu): Error logging children/slaves: {e}")
+        # --- END ADDED ---
+
 
     def _on_closing(self):
         """Handles the window close event."""
@@ -506,4 +529,3 @@ if __name__ == "__main__":
          except: pass
     finally:
          print("DEBUG: Application finished.")
-
