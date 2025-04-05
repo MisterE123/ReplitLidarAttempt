@@ -147,30 +147,6 @@ void calibrateStillSensors() {
   currentState = READY;
   printReadyMessage();
 }
-  const int numSamples = 100;
-  float sumX = 0.0, sumY = 0.0, sumZ = 0.0;
-  int sampleCount = 0;
-
-  while (sampleCount < numSamples) {
-    if (IMU.gyroscopeAvailable()) {
-      float x, y, z;
-      IMU.readGyroscope(x, y, z);
-      sumX += x;
-      sumY += y;
-      sumZ += z;
-      sampleCount++;
-      delay(10);
-    }
-  }
-
-  gyroBiasX = sumX / numSamples;
-  gyroBiasY = sumY / numSamples;
-  gyroBiasZ = sumZ / numSamples;
-  
-  Serial.println("GYRO_CAL_COMPLETE");
-  currentState = READY;
-  printReadyMessage();
-}
 
 void calibrateMag() {
   Serial.println("MAG_CAL_START");
