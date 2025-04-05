@@ -10,8 +10,8 @@ This file contains configuration settings for the IMU calibration system.
 - `baud_rate`: Communication speed with IMU (default: 115200)
 
 ### Calibration Section
-- `still_delay_seconds`: Time to wait before starting still calibration (default: 3)
-- `rotation_delay_seconds`: Time to wait before starting rotation calibration (default: 3)
+- `still_delay_seconds`: Time given to user to place device down and let it settle before still calibration (default: 5)
+- `rotation_delay_seconds`: Time given to user to prepare for rotation calibration instructions (default: 10)
 
 ## Example
 ```ini
